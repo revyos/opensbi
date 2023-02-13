@@ -362,7 +362,7 @@ static int allocate_pt_space(struct sbi_scratch *scratch)
 	}
 
 	rc = sbi_domain_root_add_memrange(mem_end_aligned - alloc_size, alloc_size,
-		PT_SPACE_SIZE , SBI_DOMAIN_MEMREGION_READABLE);
+		PT_SPACE_SIZE , SBI_DOMAIN_MEMREGION_READABLE | SBI_DOMAIN_MEMREGION_SU_RWX);
 
 	if (rc) {
 		sbi_printf(
