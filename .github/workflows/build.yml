@@ -1,0 +1,63 @@
+name: xuantie-mainline-opensbi
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+
+env:
+  xuantie_toolchain: https://occ-oss-prod.oss-cn-hangzhou.aliyuncs.com/resource//1732863205852
+  toolchain_file_name: Xuantie-900-gcc-linux-6.6.0-glibc-x86_64-V3.0.1-20241120.tar.gz
+  mainline_toolchain: https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2025.01.20
+  mainline_toolchain_file_name: riscv64-glibc-ubuntu-22.04-gcc-nightly-2025.01.20-nightly.tar.xz
+  wget_alias: 'wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 -t 0'
+  ARCH: riscv
+  CROSS_COMPILE: riscv64-unknown-linux-gnu-
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [xuantie-gcc, gcc-14]
+
+    steps:
+      - name: Install software
+        run: |
+              sudo apt update && \
+              sudo apt install -y gdisk dosfstools g++-12-riscv64-linux-gnu cpp-12-riscv64-linux-gnu build-essential \
+                                  libncurses-dev gawk flex bison openssl libssl-dev tree \
+                                  dkms libelf-dev libudev-dev libpci-dev libiberty-dev autoconf device-tree-compiler
+
+      - name: Checkout opensbi
+        uses: actions/checkout@v4
+
+      - name: opensbi compile
+        run: |
+              mkdir output
+              if [[ ${{ matrix.name }} = "xuantie-gcc" ]]; then
+                ${wget_alias} ${xuantie_toolchain}/${toolchain_file_name}
+                tar -xvf ${toolchain_file_name} -C /opt
+                export PATH="/opt/Xuantie-900-gcc-linux-6.6.0-glibc-x86_64-V3.0.1/bin:$PATH"
+              else
+                ${wget_alias} ${mainline_toolchain}/${mainline_toolchain_file_name}
+                tar -xvf ${mainline_toolchain_file_name} -C /opt
+                export PATH="/opt/riscv/bin:$PATH"
+              fi
+              ${CROSS_COMPILE}gcc -v
+
+              pushd $PWD
+                make PLATFORM=generic FW_PIC=y
+                cp -v build/platform/generic/firmware/fw_dynamic.bin output/
+              popd
+              tree ${GITHUB_WORKSPACE}/output
+
+      - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v4
+        with:
+          name: xuantie-mainline-opensbi-${{ matrix.name }}
+          path: output/fw_dynamic.bin
+          retention-days: 30
