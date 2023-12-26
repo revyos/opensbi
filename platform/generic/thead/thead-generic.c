@@ -11,6 +11,7 @@
 #include <sbi/riscv_barrier.h>
 #include <sbi/sbi_const.h>
 #include <sbi/sbi_console.h>
+#include <sbi/sbi_ecall.h>
 #include <sbi/sbi_hsm.h>
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_scratch.h>
@@ -32,6 +33,7 @@
 
 extern const unsigned int thead_patch_sfence_size;
 extern const struct sbi_hsm_device light_ppu;
+extern struct sbi_ecall_extension ecall_light;
 
 static void thead_fixup_sfence(void)
 {
@@ -225,7 +227,10 @@ static int thead_generic_final_init(bool cold_boot,
 				 current_hartid(), __func__, __LINE__, cold_boot);
 			sbi_hsm_set_device(&light_ppu);
 		}
+		if (!sbi_strcmp(match->compatible, "thead,light"))
+			sbi_ecall_register_extension(&ecall_light);
 	}
+	
 
 	return 0;
 }
