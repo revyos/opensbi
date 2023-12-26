@@ -6,16 +6,19 @@
  *
  */
 
-#include <thead_c9xx.h>
+#include <thead/c9xx.h>
 #include <platform_override.h>
 #include <sbi/riscv_barrier.h>
 #include <sbi/sbi_const.h>
+#include <sbi/sbi_console.h>
+#include <sbi/sbi_hsm.h>
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_string.h>
 #include <sbi_utils/fdt/fdt_helper.h>
 
 #define THEAD_QUIRK_SFENCE_FIXUP		BIT(0)
+#define THEAD_QUIRK_LOGHT_PPU_FIXUP		BIT(1)
 
 #define thead_get_symbol_local_address(_name)				\
 	({								\
@@ -28,6 +31,7 @@
 	})
 
 extern const unsigned int thead_patch_sfence_size;
+extern const struct sbi_hsm_device light_ppu;
 
 static void thead_fixup_sfence(void)
 {
@@ -55,7 +59,8 @@ static const struct fdt_match thead_generic_match[] = {
 	{ .compatible = "thead,th1520",
 	  .data = (void*)THEAD_QUIRK_SFENCE_FIXUP },
 	{ .compatible = "thead,light",
-	  .data = (void*)THEAD_QUIRK_SFENCE_FIXUP }, /* Compatible with thead vendor kernel  */
+	  .data = (void*)(THEAD_QUIRK_SFENCE_FIXUP | /* Compatible with thead vendor kernel  */
+			  THEAD_QUIRK_LOGHT_PPU_FIXUP) },
 	{ },
 };
 
@@ -209,8 +214,25 @@ static int thead_vendor_ext_provider(long funcid,
 	return 0;
 }
 
+static int thead_generic_final_init(bool cold_boot,
+	 const struct fdt_match *match)
+{
+	unsigned long quirks = (unsigned long)match->data;
+
+	if (cold_boot) {
+		if (quirks & THEAD_QUIRK_LOGHT_PPU_FIXUP) {
+			sbi_printf("core:%d %s: line:%d enter. cold_boot:%d\n",
+				 current_hartid(), __func__, __LINE__, cold_boot);
+			sbi_hsm_set_device(&light_ppu);
+		}
+	}
+
+	return 0;
+}
+
 const struct platform_override thead_generic = {
 	.match_table	= thead_generic_match,
 	.early_init	= thead_generic_early_init,
-	.vendor_ext_provider = thead_vendor_ext_provider
+	.vendor_ext_provider = thead_vendor_ext_provider,
+	.final_init	= thead_generic_final_init
 };
