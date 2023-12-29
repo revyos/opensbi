@@ -19,7 +19,7 @@
 #include <sbi_utils/fdt/fdt_helper.h>
 
 extern const struct sbi_hsm_device light_ppu;
-
+extern struct sbi_ecall_extension ecall_light;
 struct thead_generic_quirks {
 	u64	errata;
 };
@@ -206,6 +206,8 @@ static int thead_generic_final_init(bool cold_boot,
 				 current_hartid(), __func__, __LINE__, cold_boot);
 			sbi_hsm_set_device(&light_ppu);
 		}
+		if (!sbi_strcmp(match->compatible, "thead,light"))
+			sbi_ecall_register_extension(&ecall_light);
 	}
 
 	return 0;
