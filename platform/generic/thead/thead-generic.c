@@ -213,17 +213,18 @@ static int thead_generic_final_init(bool cold_boot,
 	return 0;
 }
 
-static struct thead_generic_quirks thead_th1520_quirks = {
+/* static struct thead_generic_quirks thead_th1520_quirks = {
 	.errata = THEAD_QUIRK_ERRATA_TLB_FLUSH,
-};
+}; */
 
 static struct thead_generic_quirks thead_light_quirks = {
 	.errata = THEAD_QUIRK_ERRATA_TLB_FLUSH | THEAD_QUIRK_ERRATA_LOGHT_PPU,
 };
 
 static const struct fdt_match thead_generic_match[] = {
-	{ .compatible = "thead,th1520", .data = &thead_th1520_quirks },
+/*	{ .compatible = "thead,th1520", .data = &thead_th1520_quirks }, */
 	{ .compatible = "thead,th1520", .data = &thead_light_quirks },
+        { .compatible = "thead,light", .data = &thead_light_quirks },
 	{ },
 };
 
