@@ -33,6 +33,10 @@ config FDT_RESET_SYSCON
 	depends on FDT_REGMAP
 	default n
 
+config FDT_RESET_THEAD
+	bool "T-HEAD FDT reset driver"
+	default n
+
 endif
 
 endmenu
