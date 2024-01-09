@@ -41,7 +41,7 @@ static void clone_csrs(int cnt)
 
 static int thead_system_reset_check(u32 type, u32 reason)
 {
-	return 1;
+	return 0;
 }
 
 static void thead_system_reset(u32 type, u32 reason)
