@@ -26,12 +26,7 @@ jobs:
           - name: k230-v6.8
             abi: rv64
             gcc: gcc-13
-            branch: k230-v6.8-wip
-
-          - name: k230-v6.6
-            abi: rv64ilp32
-            gcc: gcc-13
-            branch: k230-6.6-ilp32
+            branch: k230-v6.8
 
     steps:
       - name: Install software
@@ -49,7 +44,7 @@ jobs:
       - name: Checkout k230 kernel
         uses: actions/checkout@v4
         with:
-          repository: revysr/linux
+          repository: revyos/k230-linux-kernel
           ref: ${{ matrix.branch }}
           path: linux
           
