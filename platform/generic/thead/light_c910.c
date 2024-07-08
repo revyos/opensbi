@@ -62,7 +62,7 @@ static unsigned long csr_mie;
 static unsigned long csr_mhcr;
 static unsigned long csr_mhint;
 static unsigned long csr_msmpen;
-static int hotplug_flag = 0;
+int hotplug_flag = 0;
 
 extern void __thead_pre_start_warm(void);
 extern void *_data_start, *_data_end, *_bss_start, *_bss_end, *_fw_end;

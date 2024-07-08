@@ -38,16 +38,66 @@
 #define PMP_ENTRY_END_ADDR(n)	(PMP_ENTRY_START_ADDR(n) + 4)
 #define PMP_ENTRY_CFG_ADDR(n)	(PMP_BASE_ADDR + ((n / 4) * 4))
 
+/* redefine CSR register */
+#define CSR_MXSTATUS	THEAD_C9XX_CSR_MXSTATUS
+#define CSR_MHCR		THEAD_C9XX_CSR_MHCR
+#define CSR_MCCR2		THEAD_C9XX_CSR_MCCR2
+#define CSR_MHINT		THEAD_C9XX_CSR_MHINT
+#define CSR_MHINT2_E	THEAD_C9XX_CSR_MHINT2
+#define CSR_MHINT4		THEAD_C9XX_CSR_MHINT4
+#define CSR_MSMPR		THEAD_C9XX_CSR_MSMPR
+#define CSR_SMPEN		CSR_MSMPR
+
+// csr register value by default
+static unsigned long csr_smpen;
+static unsigned long csr_mccr2;
+static unsigned long csr_mxstatus;
+static unsigned long csr_mhint;
+static unsigned long csr_mhcr;
+static unsigned long csr_mhint2;
+static unsigned long csr_mhint4;
+
+extern int hotplug_flag;
 extern const struct sbi_hsm_device light_ppu;
 static u32 selected_hartid = 0;
 struct thead_generic_quirks {
 	u64	errata;
 };
 
+static void cpu_performance_save(void)
+{
+	csr_smpen = csr_read(CSR_SMPEN);
+	csr_mccr2 = csr_read(CSR_MCCR2);
+	csr_mxstatus = csr_read(CSR_MXSTATUS);
+	csr_mhint = csr_read(CSR_MHINT);
+	csr_mhcr = csr_read(CSR_MHCR);
+	csr_mhint2 = csr_read(CSR_MHINT2_E);
+	csr_mhint4 = csr_read(CSR_MHINT4);
+}
+
+static void cpu_performance_restore(void)
+{
+	csr_write(CSR_SMPEN,    csr_smpen);
+	csr_write(CSR_MCCR2,    csr_mccr2);
+	csr_write(CSR_MXSTATUS, csr_mxstatus);
+	csr_write(CSR_MHINT,    csr_mhint);
+	csr_write(CSR_MHCR,     csr_mhcr);
+	csr_write(CSR_MHINT2_E, csr_mhint2);
+	csr_write(CSR_MHINT4,   csr_mhint4);
+}
+
+static void thead_generic_final_exit(const struct fdt_match *match)
+{
+	cpu_performance_save();
+}
+
 static int thead_generic_early_init(bool cold_boot,
 				    const struct fdt_match *match)
 {
 	struct thead_generic_quirks *quirks = (void *)match->data;
+
+	if (hotplug_flag)
+		cpu_performance_restore();
 
 	if (quirks->errata & THEAD_QUIRK_ERRATA_TLB_FLUSH)
 		thead_register_tlb_flush_trap_handler();
@@ -375,5 +425,6 @@ const struct platform_override thead_generic = {
 	.extensions_init	= thead_generic_extensions_init,
 	.vendor_ext_provider = thead_vendor_ext_provider,
 	.final_init     = thead_generic_final_init,
+	.final_exit		= thead_generic_final_exit,
 	.cold_boot_allowed = thead_generic_cold_boot_allowed,
 };
