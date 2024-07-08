@@ -16,6 +16,7 @@
 #include <sbi/sbi_console.h>
 #include <sbi/sbi_ecall_interface.h>
 #include <sbi/sbi_error.h>
+#include <sbi/sbi_init.h>
 #include <sbi/sbi_hsm.h>
 #include <sbi/sbi_ipi.h>
 #include <sbi/sbi_scratch.h>
@@ -199,6 +200,9 @@ static int light_hart_start(u32 hartid, ulong saddr)
 	/* send ipi to triger already plugout core which will be waiting in sbi_hsm_hart_wait
 	 * after reset.
 	 */
+	if (sbi_entry_count(hartid) == 0)
+		return sbi_ipi_raw_send(sbi_hartid_to_hartindex(hartid));
+
 	light_auxcore_restore(hartid);
 
 	sbi_printf("core:%d %s: line:%d exit\n", current_hartid(), __func__, __LINE__);
