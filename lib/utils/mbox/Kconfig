@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+menu "MBOX Support"
+
+config FDT_MBOX
+	bool "FDT based MBOX drivers"
+	depends on FDT
+	select MBOX
+	default n
+
+if FDT_MBOX
+
+config FDT_MBOX_THEAD
+	bool "THEAD MBOX driver"
+	default n
+endif
+
+endmenu
