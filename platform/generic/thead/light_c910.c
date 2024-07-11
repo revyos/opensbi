@@ -10,6 +10,8 @@
 #include <thead/light/aonsys_reg_define.h>
 #include <thead/light/apsys_reg_define.h>
 #include <thead/light/aprst_reg_define.h>
+#include <thead/light/apclk_reg_define.h>
+#include <thead/thead_aon.h>
 #include <sbi/riscv_asm.h>
 #include <sbi/riscv_io.h>
 #include <sbi/sbi_bitops.h>
@@ -22,23 +24,23 @@
 #include <sbi/sbi_scratch.h>
 #include <sbi_utils/fdt/fdt_fixup.h>
 #include <sbi_utils/fdt/fdt_helper.h>
+#include <sbi/sbi_system.h>
 
 #define INDICATOR_0_MAGIC_NUM           0x5a5a5a5a
 #define INDICATOR_1_MAGIC_NUM           0x12345678
 #define INDICATOR_2_MAGIC_NUM           0x32fde438
 #define INDICATOR_3_MAGIC_NUM           0x8ab4c52c
 
-
 /* system lowpoer mode */
 #define LP_HW_VAD			(1 << 16)
 #define LP_STANDBY			(2 << 16)
 
 /* redefine CSR register */
-#define CSR_MXSTATUS	THEAD_C9XX_CSR_MXSTATUS
+#define CSR_MXSTATUS		THEAD_C9XX_CSR_MXSTATUS
 #define CSR_MHCR		THEAD_C9XX_CSR_MHCR
 #define CSR_MCCR2		THEAD_C9XX_CSR_MCCR2
 #define CSR_MHINT		THEAD_C9XX_CSR_MHINT
-#define CSR_MHINT2_E	THEAD_C9XX_CSR_MHINT2
+#define CSR_MHINT2_E		THEAD_C9XX_CSR_MHINT2
 #define CSR_MHINT4		THEAD_C9XX_CSR_MHINT4
 #define CSR_MSMPR		THEAD_C9XX_CSR_MSMPR
 #define CSR_SMPEN		CSR_MSMPR
@@ -56,6 +58,13 @@
 #define MSMPR_MSPEN		_UL(0x00000001)
 
 #define CONFIG_SYS_CACHELINE_SIZE   64
+
+#define ONLINE			true
+#define OFFLINE			false
+#define C910_CORE0		0
+#define C910_CORE1		1
+#define C910_CORE2		2
+#define C910_CORE3		3
 
 static unsigned long csr_mstatus;
 static unsigned long csr_mie;
@@ -178,65 +187,84 @@ static void light_auxcore_save(void)
 
 static void light_auxcore_restore(u32 hartid)
 {
-	u32 val;
-
 	/* set auxcore bootrom jump entry after warm reset*/
 	light_auxcore_entryboot_set();
-
-	if (hotplug_flag) {
-		val = readl((volatile void *)REG_C910_SWRST);
-		val &= ~(1 << (hartid + 1));
-		writel(val, (volatile void *)REG_C910_SWRST);
-
-		val |= (1 << (hartid + 1));
-		writel(val, (volatile void *)REG_C910_SWRST);
-	}
 }
 
 static int light_hart_start(u32 hartid, ulong saddr)
 {
-	sbi_printf("core:%d %s: line:%d enter\n",current_hartid(), __func__, __LINE__);
+	int ret;
 
 	/* send ipi to triger already plugout core which will be waiting in sbi_hsm_hart_wait
 	 * after reset.
 	 */
-	if (sbi_entry_count(hartid) == 0)
+	if (sbi_entry_count(hartid) == C910_CORE0)
 		return sbi_ipi_raw_send(sbi_hartid_to_hartindex(hartid));
 
 	light_auxcore_restore(hartid);
-
-	sbi_printf("core:%d %s: line:%d exit\n", current_hartid(), __func__, __LINE__);
-
+	ret = thead_aon_cpuhp(hartid, ONLINE);
+	if(ret)
+		return ret;
 	return 0;
 }
 
 static int light_hart_stop(void)
 {
-	sbi_printf("core:%d %s: line:%d enter\n",current_hartid(),  __func__, __LINE__);
+	if (sbi_entry_count(current_hartid()) == C910_CORE0)
+	{
+	    sbi_printf("[%s,%d]core %d is not avaliable in hotplug process"
+			    , __func__, __LINE__, current_hartid());
+	    wfi();
+	}
+	else
+	{
+	    thead_aon_cpuhp(current_hartid(), OFFLINE);
+	    light_auxcore_save();
+	}
 
-	light_auxcore_save();
-
-	sbi_printf("core:%d %s: line:%d exit\n", current_hartid(), __func__, __LINE__);
+	/* It should never reach here */
+	sbi_hart_hang();
 
 	return 0;
 }
 
-static int light_hart_suspend(u32 suspend_type, ulong mmode_resume_addr)
+static int th1520_system_suspend(u32 suspend_type,
+				 unsigned long resume_addr)
+ {
+	int ret;
+
+ 	/* Use the generic code for retentive suspend. */
+	if (suspend_type != SBI_SUSP_SLEEP_TYPE_SUSPEND)
+		return SBI_EINVAL;
+
+	ret = thead_aon_system_suspend();
+	if (ret) {
+		sbi_printf("failed to notify aon subsys with suspend to ram...%08x\n", ret);
+		return ret;
+	}
+ 	light_mastercore_save();
+
+ 	return 0;
+ }
+
+static int th1520_system_suspend_check(u32 sleep_type)
 {
-	sbi_printf("core:%d %s: line:%d enter\n",current_hartid(),  __func__, __LINE__);
-	/* Use the generic code for retentive suspend. */
-	if (!(suspend_type & SBI_HSM_SUSP_NON_RET_BIT))
-		return SBI_ENOTSUPP;
+	int ret;
+	ret = (sleep_type == SBI_SUSP_SLEEP_TYPE_SUSPEND) ? 0 : SBI_EINVAL;
+	if(ret)
+		return ret;
 
-	light_mastercore_save();
-
-	sbi_printf("core:%d %s: line:%d exit\n", current_hartid(), __func__, __LINE__);
-	return 0;
+	return SBI_OK;
 }
 
-const struct sbi_hsm_device light_ppu = {
-	.name		= "light-ppu",
-	.hart_start	= light_hart_start,
-	.hart_stop	= light_hart_stop,
-	.hart_suspend	= light_hart_suspend,
+ const struct sbi_hsm_device light_ppu = {
+ 	.name		= "light-ppu",
+ 	.hart_start	= light_hart_start,
+ 	.hart_stop	= light_hart_stop,
+};
+
+struct sbi_system_suspend_device th1520_susp = {
+	.name		= "th1520-susp",
+	.system_suspend_check = th1520_system_suspend_check,
+	.system_suspend = th1520_system_suspend,
 };
