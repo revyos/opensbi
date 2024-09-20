@@ -201,7 +201,7 @@ static int thead_mbox_init(void *fdt, int nodeoff,
 {
 	int rc = 0, bitmap = 0, len = 0;
 	struct thead_mbox_adapter *adapter;
-	uint8_t data = 0x0;
+	uint32_t data = 0x0;
 
 	adapter = sbi_zalloc(sizeof(*adapter));
 	if (!adapter)
