@@ -268,6 +268,9 @@ static void sbi_thead_reserved_pmp_set(void)
 	unsigned int num, reg_val;
 
 	for (num = 0; num < 4; num++) {
+		if (__sbi_hsm_hart_get_state(num) == SBI_HSM_STATE_STOPPED)
+			continue;
+
 		/*	pmp entry 28 for reserved memory	*/
 		writel(RESERVED_START_ADDR >> 12, (void *)(PMP_ENTRY_START_ADDR(28) + num*PMP_SIZE_PER_CORE));
 		writel(RESERVED_END_ADDR >> 12, (void *)(PMP_ENTRY_END_ADDR(28) + num*PMP_SIZE_PER_CORE));
@@ -290,12 +293,18 @@ static void sbi_thead_tcm0_pmp_set(unsigned long auth)
 
 	if (reg_val != TCM0_START_ADDR >> 12)
 		for(num = 0; num < 4; num++) {
+			if (__sbi_hsm_hart_get_state(num) == SBI_HSM_STATE_STOPPED)
+				continue;
+
 			/*	pmp entry 26 for dsp tcm0	*/
 			writel(TCM0_START_ADDR >> 12, (void *)(PMP_ENTRY_START_ADDR(26) + num*PMP_SIZE_PER_CORE));
 			writel(TCM0_END_ADDR >> 12, (void *)(PMP_ENTRY_END_ADDR(26) + num*PMP_SIZE_PER_CORE));
 		}
 
 	for(num = 0; num < 4; num++) {
+		if (__sbi_hsm_hart_get_state(num) == SBI_HSM_STATE_STOPPED)
+			continue;
+
 		/*	pmp entry 26 config	*/
 		reg_val = readl((void *)(PMP_ENTRY_CFG_ADDR(26) + num*PMP_SIZE_PER_CORE));
 		reg_val = (reg_val & 0xff00ffff) | (auth << 16);
@@ -313,12 +322,18 @@ static void sbi_thead_tcm1_pmp_set(unsigned long auth)
 	reg_val = readl((void *)PMP_ENTRY_START_ADDR(27));
 	if (reg_val != TCM1_START_ADDR >> 12)
 		for (num = 0; num < 4; num++) {
+			if (__sbi_hsm_hart_get_state(num) == SBI_HSM_STATE_STOPPED)
+				continue;
+
 			/*	pmp entry 27 for dsp tcm1	*/
 			writel(TCM1_START_ADDR >> 12, (void *)(PMP_ENTRY_START_ADDR(27) + num*PMP_SIZE_PER_CORE));
 			writel(TCM1_END_ADDR >> 12, (void *)(PMP_ENTRY_END_ADDR(27) + num*PMP_SIZE_PER_CORE));
 		}
 
 	for (num = 0; num < 4; num++) {
+		if (__sbi_hsm_hart_get_state(num) == SBI_HSM_STATE_STOPPED)
+			continue;
+
 		/*	pmp entry 27 config	*/
 		reg_val = readl((void *)(PMP_ENTRY_CFG_ADDR(27) + num*PMP_SIZE_PER_CORE));
 		reg_val = (reg_val & 0x00ffffff) | (auth << 24);
@@ -416,6 +431,10 @@ static struct thead_generic_quirks thead_th1520_quirks = {
 };
 */
 
+static struct thead_generic_quirks thead_th1520_quirks = {
+	.errata = THEAD_QUIRK_ERRATA_LOGHT_PPU,
+};
+
 static struct thead_generic_quirks canaan_k230_quirks = {
 	.errata = THEAD_QUIRK_ERRATA_THEAD_PMU,
 };
@@ -424,9 +443,11 @@ static struct thead_generic_quirks sophgo_cv1800_quirks = {
 	.errata = THEAD_QUIRK_ERRATA_THEAD_PMU,
 };
 
+/*
 static struct thead_generic_quirks thead_light_quirks = {
 	.errata = THEAD_QUIRK_ERRATA_TLB_FLUSH | THEAD_QUIRK_ERRATA_LOGHT_PPU,
 };
+*/
 
 static const struct fdt_match thead_generic_match[] = {
 	{ .compatible = "sophgo,cv1800b", .data = &sophgo_cv1800_quirks },
@@ -434,9 +455,8 @@ static const struct fdt_match thead_generic_match[] = {
 	{ .compatible = "sophgo,sg2000", .data = &sophgo_cv1800_quirks },
 	{ .compatible = "sophgo,sg2002", .data = &sophgo_cv1800_quirks },
 	{ .compatible = "canaan,kendryte-k230", .data = &canaan_k230_quirks },
-/*	{ .compatible = "thead,th1520", .data = &thead_th1520_quirks }, */
-	{ .compatible = "thead,th1520", .data = &thead_light_quirks },
-        { .compatible = "thead,light", .data = &thead_light_quirks },
+	{ .compatible = "thead,th1520", .data = &thead_th1520_quirks },
+        { .compatible = "thead,light", .data = &thead_th1520_quirks },
 	{ },
 };
 

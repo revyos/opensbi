@@ -637,6 +637,8 @@ memcmp:
 	.align 3
 	.globl _trap_handler
 _trap_handler:
+	sfence.vma zero, t0
+
 	TRAP_SAVE_AND_SETUP_SP_T0
 
 	TRAP_SAVE_MEPC_MSTATUS 0
