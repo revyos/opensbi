@@ -101,7 +101,7 @@ int thead_aon_init()
 		sbi_printf("fdt addr get %ld\n", (uint64_t)fdt);
 	}
 
-	node = fdt_node_offset_by_compatible(fdt, -1, "thead,th1520-aon");
+	node = fdt_node_offset_by_compatible(fdt, -1, "xuantie,th1520-aon");
 	if (node < 0) {
 		sbi_printf("aon node not found in FDT: %d\n", node);
 		return SBI_ENODEV;
