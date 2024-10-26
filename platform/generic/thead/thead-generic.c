@@ -414,7 +414,7 @@ static int thead_generic_final_init(bool cold_boot,
 				return -1;
 			}
 		}
-		if (!sbi_strcmp(match->compatible, "thead,light"))
+		if (!sbi_strcmp(match->compatible, "thead,th1520"))
 			sbi_ecall_register_extension(&ecall_light);
 	}
 
