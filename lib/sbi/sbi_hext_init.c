@@ -318,7 +318,7 @@ static int hart_with_mmu_count(void *fdt)
 		if (!mmu_type || !len)
 			continue;
 
-		hart_index = current_hartindex();
+		hart_index = sbi_hartid_to_hartindex(hartid);
 		if (hart_index == -1u)
 			continue;
 
