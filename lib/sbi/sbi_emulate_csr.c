@@ -26,8 +26,12 @@ static bool hpm_allowed(int hpm_num, ulong prev_mode, bool virt)
 	if (prev_mode <= PRV_S) {
 		if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_10) {
 			cen &= csr_read(CSR_MCOUNTEREN);
-			if (virt)
-				cen &= csr_read(CSR_HCOUNTEREN);
+			if (virt) {
+				if (misa_extension('H'))
+					cen &= csr_read(CSR_HCOUNTEREN);
+				else
+					cen &= 0;
+			}
 		} else {
 			cen = 0;
 		}
