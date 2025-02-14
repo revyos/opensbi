@@ -73,8 +73,6 @@ int sbi_emulate_csr_read(int csr_num, struct sbi_trap_regs *regs,
 		*csr_val = csr_read(CSR_MCYCLE);
 		break;
 	case CSR_TIME:
-		if (!hpm_allowed(csr_num - CSR_CYCLE, prev_mode, virt))
-			return SBI_ENOTSUPP;
 		/*
 		 * We emulate TIME CSR for both Host (HS/U-mode) and
 		 * Guest (VS/VU-mode).
