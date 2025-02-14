@@ -32,6 +32,7 @@
 #include <sbi/sbi_tlb.h>
 #include <sbi/sbi_version.h>
 #include <sbi/sbi_unit_test.h>
+#include <sbi/sbi_hext.h>
 
 #define BANNER                                              \
 	"   ____                    _____ ____ _____\n"     \
@@ -196,6 +197,25 @@ static void sbi_boot_print_hart(struct sbi_scratch *scratch, u32 hartid)
 	sbi_hart_delegation_dump(scratch, "Boot HART ", "           ");
 }
 
+static void sbi_boot_print_hext(struct sbi_scratch *scratch)
+{
+	sbi_printf("\n");
+
+	if (misa_extension('H')) {
+		sbi_printf("Hypervisor Extension      : Native\n");
+		return;
+	} else if (sbi_hext_enabled()) {
+		sbi_printf("Hypervisor Extension      : Emulated\n");
+		sbi_printf("Shadow PT Space Base      : 0x%lx\n",
+			   (unsigned long)hext_pt_start);
+		sbi_printf("Shadow PT Space Size      : %lu pages\n",
+			   hext_pt_size);
+	} else {
+		sbi_printf("Hypervisor Extension      : Not Emulated\n");
+		return;
+	}
+}
+
 static unsigned long coldboot_done;
 
 static void wait_for_coldboot(struct sbi_scratch *scratch)
@@ -334,6 +354,15 @@ static void __noreturn init_coldboot(struct sbi_scratch *scratch, u32 hartid)
 		sbi_hart_hang();
 	}
 
+	rc = sbi_hext_init(scratch, true);
+
+	if (rc) {
+		sbi_printf(
+			"%s: Initializing hypervisor extension emulation failed (error %d)\n",
+			__func__, rc);
+		sbi_hart_hang();
+	}
+
 	/*
 	 * Note: Platform final initialization should be after finalizing
 	 * domains so that it sees correct domain assignment and PMP
@@ -362,6 +391,8 @@ static void __noreturn init_coldboot(struct sbi_scratch *scratch, u32 hartid)
 	sbi_boot_print_domains(scratch);
 
 	sbi_boot_print_hart(scratch, hartid);
+
+	sbi_boot_print_hext(scratch);
 
 	run_all_tests();
 
@@ -466,6 +497,10 @@ static void __noreturn init_warm_resume(struct sbi_scratch *scratch,
 	sbi_hsm_hart_resume_start(scratch);
 
 	rc = sbi_hart_reinit(scratch);
+	if (rc)
+		sbi_hart_hang();
+
+	rc = sbi_hext_init(scratch, false);
 	if (rc)
 		sbi_hart_hang();
 
