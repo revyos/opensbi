@@ -13,6 +13,7 @@
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_math.h>
 #include <sbi/sbi_hart.h>
+#include <sbi/sbi_hext.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_string.h>
 #include <sbi/sbi_error.h>
@@ -140,6 +141,27 @@ void fdt_cpu_fixup(void *fdt)
 		    !mmu_type || !len)
 			fdt_setprop_string(fdt, cpu_offset, "status",
 					   "disabled");
+
+		if (hart_hext_state[hartindex].available) {
+			int i, first_ = 1;
+			const char *s, *riscv_isa_orig;
+			char *d, riscv_isa_fixup[2048];
+			riscv_isa_orig = fdt_getprop(fdt, cpu_offset, "riscv,isa", &len);
+			s = riscv_isa_orig;
+			d = riscv_isa_fixup;
+			for (i = 0; i < len; i++) {
+				if (first_ && (*s == '_')) {
+					first_ = 0;
+					*d++ = 'h';
+					*d++ = '_';
+					s++;
+				} else
+					*d++ = *s++;
+			}
+			*d = '\0';
+			fdt_setprop_string(fdt, cpu_offset, "riscv,isa", riscv_isa_fixup);
+			fdt_appendprop_string(fdt, cpu_offset, "riscv,isa-extensions", "h");
+		}
 	}
 }
 
