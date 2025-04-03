@@ -106,6 +106,10 @@ static int thead_generic_early_init(bool cold_boot, const void *fdt,
 	if (quirks->errata & THEAD_QUIRK_ERRATA_TLB_FLUSH)
 		thead_register_tlb_flush_trap_handler();
 
+	/* enable mxstatus.clintee */
+	if (quirks->errata & THEAD_QUIRK_ERRATA_XTHEADSSTC)
+		csr_set(CSR_MXSTATUS, BIT_ULL(17));
+
 	return 0;
 }
 
@@ -432,7 +436,7 @@ static struct thead_generic_quirks thead_th1520_quirks = {
 */
 
 static struct thead_generic_quirks thead_th1520_quirks = {
-	.errata = THEAD_QUIRK_ERRATA_LOGHT_PPU,
+	.errata = THEAD_QUIRK_ERRATA_LOGHT_PPU | THEAD_QUIRK_ERRATA_XTHEADSSTC,
 };
 
 static struct thead_generic_quirks canaan_k230_quirks = {
