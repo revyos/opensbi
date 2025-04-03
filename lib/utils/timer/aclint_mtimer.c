@@ -13,6 +13,7 @@
 #include <sbi/sbi_bitops.h>
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_error.h>
+#include <sbi/sbi_hart.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_timer.h>
 #include <sbi_utils/timer/aclint_mtimer.h>
