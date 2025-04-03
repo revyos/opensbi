@@ -117,10 +117,13 @@ static int thead_generic_extensions_init(const struct fdt_match *match,
 					 struct sbi_hart_features *hfeatures)
 {
 	struct thead_generic_quirks *quirks = (void *)match->data;
+	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
 
 	if (quirks->errata & THEAD_QUIRK_ERRATA_THEAD_PMU)
 		thead_c9xx_register_pmu_device();
 
+	if (quirks->errata & THEAD_QUIRK_ERRATA_XTHEADSSTC)
+		sbi_hart_update_extension(scratch, SBI_HART_EXT_SSTC, false);
 	return 0;
 }
 
