@@ -38,7 +38,7 @@ enum semihosting_open_mode {
 
 #ifdef CONFIG_SERIAL_SEMIHOSTING
 int semihosting_init(void);
-int semihosting_enabled(void);
+bool semihosting_enabled(void);
 #else
 static inline int semihosting_init(void) { return SBI_ENODEV; }
 static inline int semihosting_enabled(void) { return 0; }
