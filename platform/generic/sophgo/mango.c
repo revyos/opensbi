@@ -84,7 +84,7 @@ static bool mango_force_emulate_time_csr(const struct fdt_match *match)
 }
 
 static const struct fdt_match sophgo_mango_match[] = {
-	{ .compatible = "sophgo,mango" },
+	{ .compatible = "sophgo,sg2042" },
 	{ },
 };
 
