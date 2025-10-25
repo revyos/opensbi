@@ -223,6 +223,7 @@ static void wake_coldboot_harts(struct sbi_scratch *scratch, u32 hartid)
 {
 	/* Mark coldboot done */
 	__smp_store_release(&coldboot_done, 1);
+	RISCV_FENCE(w, o);
 
 	/* Acquire coldboot lock */
 	spin_lock(&coldboot_lock);
