@@ -171,6 +171,16 @@ void fdt_cpu_fixup(void *fdt)
 			fdt_appendprop_string(fdt, cpu_offset,
 					      "riscv,isa-extensions", "zicntr");
 		}
+
+		{
+			err = fdt_open_into(fdt, fdt, fdt_totalsize(fdt) + 32);
+			if (err)
+				continue;
+			fdt_appendprop_string(fdt, cpu_offset, "riscv,isa-extensions", "zimop");
+			fdt_appendprop_string(fdt, cpu_offset, "riscv,isa-extensions", "zcmop");
+			fdt_appendprop_string(fdt, cpu_offset, "riscv,isa-extensions", "zvbb");
+			fdt_appendprop_string(fdt, cpu_offset, "riscv,isa-extensions", "supm");
+		}
 	}
 }
 
