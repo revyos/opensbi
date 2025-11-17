@@ -996,7 +996,7 @@ static inline u64 op_rev8(u64 op1, u64 op2)
 		     "rev8 %0, %2\n\t"
 		     "srl %0, %0, %1\n\t"
 		     ".option pop\n\t"
-		     : "=r"(result)
+		     : "=&r"(result)
 		     : "r"(op1), "r"(op2));
 	return result;
 }
@@ -1014,7 +1014,7 @@ static inline u64 op_clz(u64 op1, u64 op2)
 		     "clz %0, %2\n\t"
 		     "sub %0, %0, %1\n\t"
 		     ".option pop\n\t"
-		     : "=r"(result)
+		     : "=&r"(result)
 		     : "r"(op1), "r"(op2));
 	return result;
 }
@@ -1027,7 +1027,7 @@ static inline u64 op_ctz(u64 op1, u64 op2)
 		     "ctz %0, %2\n\t"
 		     "minu %0, %0, %1\n\t"
 		     ".option pop\n\t"
-		     : "=r"(result)
+		     : "=&r"(result)
 		     : "r"(op1), "r"(op2));
 	return result;
 }
