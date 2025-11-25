@@ -68,16 +68,17 @@ static int sophgo_wdt_system_get_top_base(void *fdt,
 		 int nodeoff, unsigned long *addr)
 {
 	const fdt32_t *val;
-	int len, noff;
+	int len, noff = -1;
 
 	val = fdt_getprop(fdt, nodeoff, "subctrl-syscon", &len);
 	if (val || len >= sizeof(fdt32_t)) {
 		noff = fdt_node_offset_by_phandle(fdt, fdt32_to_cpu(*val));
 		if (noff < 0)
 			return noff;
+		return fdt_get_node_addr_size(fdt, noff, 0, addr, NULL);
 	}
 
-	return fdt_get_node_addr_size(fdt, noff, 0, addr, NULL);
+	return noff;
 }
 
 static struct sbi_system_reset_device mango_reset_wdt = {
