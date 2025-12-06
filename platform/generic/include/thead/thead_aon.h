@@ -6,10 +6,10 @@
  *   XiaoJin Chai <xiaojin.cxj@alibaba-inc.com>
  */
 
-#include <sbi_utils/mbox/fdt_mbox.h>
-
 #ifndef __IPC_H_
 #define __IPC_H_
+
+#include <sbi/sbi_types.h>
 
 #define TH1520_AON_RPC_MSG_NUM 7
 #define TH1520_AON_RPC_VERSION 2
