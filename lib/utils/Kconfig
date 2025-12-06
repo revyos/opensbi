@@ -34,6 +34,4 @@ source "$(OPENSBI_SRC_DIR)/lib/utils/timer/Kconfig"
 
 source "$(OPENSBI_SRC_DIR)/lib/utils/mpxy/Kconfig"
 
-source "$(OPENSBI_SRC_DIR)/lib/utils/mbox/Kconfig"
-
 endmenu
