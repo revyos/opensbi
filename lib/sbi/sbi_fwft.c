@@ -115,7 +115,7 @@ static int fwft_misaligned_delegation_supported(struct fwft_config *conf)
 	if (!misa_extension('S'))
 		return SBI_ENOTSUPP;
 
-	return SBI_OK;
+	return SBI_ENOTSUPP;
 }
 
 static int fwft_set_misaligned_delegation(struct fwft_config *conf,
