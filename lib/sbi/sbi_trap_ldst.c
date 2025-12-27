@@ -117,6 +117,27 @@ static int sbi_trap_emulate_load(struct sbi_trap_context *tcntx,
 		len = 1;
 		imm = RVC_LB_IMM(insn);
 		c_load = true;
+	} else if ((insn & INSN_MASK_LW) == INSN_MATCH_LW) {
+		len   = 4;
+		shift = 8 * (sizeof(ulong) - len);
+#if __riscv_xlen == 64
+	} else if ((insn & INSN_MASK_LD) == INSN_MATCH_LD) {
+		len   = 8;
+		shift = 8 * (sizeof(ulong) - len);
+	} else if ((insn & INSN_MASK_LWU) == INSN_MATCH_LWU) {
+		len = 4;
+#endif
+#ifdef __riscv_flen
+	} else if ((insn & INSN_MASK_FLD) == INSN_MATCH_FLD) {
+		fp  = 1;
+		len = 8;
+	} else if ((insn & INSN_MASK_FLW) == INSN_MATCH_FLW) {
+		fp  = 1;
+		len = 4;
+	} else if ((insn & INSN_MASK_FLH) == INSN_MATCH_FLH) {
+		fp  = 1;
+		len = 2;
+#endif
 	} else if ((insn & INSN_MASK_LH) == INSN_MATCH_LH) {
 		len = -2;
 	} else if ((insn & INSN_MASK_C_LH) == INSN_MATCH_C_LH) {
@@ -266,11 +287,16 @@ do_emu:
 			SET_F64_RDS(insn, regs, val.data_u64);
 		else
 			SET_F64_RD(insn, regs, val.data_u64);
-	} else {
+	} else if (len == 4) {
 		if (c_load)
 			SET_F32_RDS(insn, regs, val.data_ulong);
 		else
 			SET_F32_RD(insn, regs, val.data_ulong);
+	} else {
+		if (c_load)
+			SET_F16_RDS(insn, regs, val.data_ulong);
+		else
+			SET_F16_RD(insn, regs, val.data_ulong);
 #endif
 	}
 
@@ -316,6 +342,23 @@ static int sbi_trap_emulate_store(struct sbi_trap_context *tcntx,
 		len = 1;
 		imm = RVC_SB_IMM(insn);
 		c_store = true;
+	} else if ((insn & INSN_MASK_SW) == INSN_MATCH_SW) {
+		len = 4;
+#if __riscv_xlen == 64
+	} else if ((insn & INSN_MASK_SD) == INSN_MATCH_SD) {
+		len = 8;
+#endif
+#ifdef __riscv_flen
+	} else if ((insn & INSN_MASK_FSD) == INSN_MATCH_FSD) {
+		len	     = 8;
+		val.data_u64 = GET_F64_RS2(insn, regs);
+	} else if ((insn & INSN_MASK_FSW) == INSN_MATCH_FSW) {
+		len	       = 4;
+		val.data_ulong = GET_F32_RS2(insn, regs);
+	} else if ((insn & INSN_MASK_FSH) == INSN_MATCH_FSH) {
+		len	       = 2;
+		val.data_ulong = GET_F16_RS2(insn, regs);
+#endif
 	} else if ((insn & INSN_MASK_SH) == INSN_MATCH_SH) {
 		len = 2;
 	} else if ((insn & INSN_MASK_C_SH) == INSN_MATCH_C_SH) {
