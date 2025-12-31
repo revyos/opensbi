@@ -40,6 +40,7 @@
 #define PMP_ENTRY_CFG_ADDR(n)	(PMP_BASE_ADDR + ((n / 4) * 4))
 
 extern const struct sbi_hsm_device light_ppu;
+static u32 selected_hartid = 0;
 static bool has_ecall_light;
 struct thead_generic_quirks {
 	u64	errata;
@@ -350,6 +351,14 @@ static int thead_generic_final_init(bool cold_boot)
 	return generic_final_init(cold_boot);
 }
 
+static bool thead_generic_cold_boot_allowed(u32 hartid)
+{
+	if (selected_hartid != -1)
+		return (selected_hartid == hartid);
+
+	return true;
+}
+
 
 static int thead_generic_platform_init(const void *fdt, int nodeoff,
 				       const struct fdt_match *match)
@@ -364,6 +373,7 @@ static int thead_generic_platform_init(const void *fdt, int nodeoff,
 	if (quirks->errata & THEAD_QUIRK_ERRATA_LOGHT_PPU)
 		generic_platform_ops.final_init = thead_generic_final_init;
 	generic_platform_ops.vendor_ext_provider = thead_vendor_ext_provider;
+	generic_platform_ops.cold_boot_allowed = thead_generic_cold_boot_allowed;
 
 	return 0;
 }
