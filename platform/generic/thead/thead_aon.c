@@ -11,9 +11,10 @@
 #include <sbi_utils/fdt/fdt_helper.h>
 #include <sbi/sbi_console.h>
 #include <sbi/sbi_error.h>
+#include "th1520_mbox.h"
 
 struct thead_aon {
-	struct mbox_adapter *mbox;
+	struct th1520_mbox *mbox;
 };
 
 struct thead_aon g_thead_aon = { 0x0 };
@@ -46,8 +47,8 @@ static int th1520_require_state_lpm_ctrl(struct th1520_aon_rpc_lpm_msg_hdr *msg,
 	hdr->func = (uint8_t)func;
 	hdr->size = TH1520_AON_RPC_MSG_NUM;
 
-	return mbox_adapter_write(g_thead_aon.mbox, AON_CHANNEL, (uint8_t *)msg,
-				  sizeof(struct th1520_aon_rpc_lpm_msg_hdr));
+	return th1520_mbox_write(g_thead_aon.mbox, AON_CHANNEL, (uint8_t *)msg,
+				 sizeof(struct th1520_aon_rpc_lpm_msg_hdr));
 }
 
 int thead_aon_cpuhp(unsigned int cpu, bool status)
@@ -89,9 +90,9 @@ int thead_aon_system_suspend()
 
 int thead_aon_init()
 {
-	int node, mbox_node, err;
-	const fdt32_t *property;
-	uint32_t phandle;
+	int node;
+	uint64_t regs[] = { 0xffefc53000, 0xffefc3f000,
+			    0xffefc47000, 0xffefc4f000 };
 	const void *fdt = fdt_get_address();
 
 	if (!fdt) {
@@ -102,29 +103,18 @@ int thead_aon_init()
 	}
 
 	node = fdt_node_offset_by_compatible(fdt, -1, "xuantie,th1520-aon");
+	if (node < 0)
+		node = fdt_node_offset_by_compatible(fdt, -1,
+						     "thead,th1520-aon");
 	if (node < 0) {
 		sbi_printf("aon node not found in FDT: %d\n", node);
 		return SBI_ENODEV;
 	}
 
-	property = fdt_getprop(fdt, node, "opensbi-mboxes", &err);
-	if (!property) {
-		sbi_printf("Failed to get 'opensbi-mboxes' property: %d\n",
-			   err);
+	g_thead_aon.mbox = th1520_mbox_init(3, regs);
+	if (!g_thead_aon.mbox) {
+		sbi_printf("failed to initialize mbox\n");
 		return SBI_ENODEV;
-	}
-
-	phandle	  = fdt32_to_cpu(property[0]);
-	mbox_node = fdt_node_offset_by_phandle(fdt, phandle);
-	if (mbox_node < 0) {
-		sbi_printf("MBOX node not found: %d\n", mbox_node);
-		return SBI_ENODEV;
-	}
-
-	err = fdt_mbox_adapter_get(fdt, mbox_node, &g_thead_aon.mbox);
-	if (err) {
-		sbi_printf("mbox adapter get faild %d\n", err);
-		return -1;
 	}
 
 	return 0;

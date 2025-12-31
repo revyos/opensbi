@@ -14,3 +14,4 @@ carray-platform_override_modules-$(CONFIG_PLATFORM_THEAD) += thead_generic
 platform-objs-$(CONFIG_PLATFORM_THEAD) += thead/thead-generic.o
 platform-objs-$(CONFIG_PLATFORM_THEAD) += thead/light_c910.o
 platform-objs-$(CONFIG_PLATFORM_THEAD) += thead/thead_aon.o
+platform-objs-$(CONFIG_PLATFORM_THEAD) += thead/th1520_mbox.o
