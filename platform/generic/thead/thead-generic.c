@@ -19,7 +19,8 @@
 #include <sbi_utils/fdt/fdt_helper.h>
 
 extern const struct sbi_hsm_device light_ppu;
-
+extern struct sbi_ecall_extension ecall_light;
+static bool has_ecall_light;
 struct thead_generic_quirks {
 	u64	errata;
 };
@@ -202,6 +203,8 @@ static int thead_generic_final_init(bool cold_boot)
 		sbi_printf("core:%d %s: line:%d enter. cold_boot:%d\n",
 			 current_hartid(), __func__, __LINE__, cold_boot);
 		sbi_hsm_set_device(&light_ppu);
+		if (has_ecall_light)
+			sbi_ecall_register_extension(&ecall_light);
 	}
 
 	return generic_final_init(cold_boot);
@@ -213,6 +216,7 @@ static int thead_generic_platform_init(const void *fdt, int nodeoff,
 {
 	const struct thead_generic_quirks *quirks = match->data;
 
+	has_ecall_light = sbi_strcmp(match->compatible, "thead,light") == 0;
 	if (quirks->errata & THEAD_QUIRK_ERRATA_TLB_FLUSH)
 		generic_platform_ops.early_init = thead_tlb_flush_early_init;
 	if (quirks->errata & THEAD_QUIRK_ERRATA_THEAD_PMU)
