@@ -689,6 +689,8 @@ int sbi_pmu_ctr_stop(unsigned long cbase, unsigned long cmask,
 			ret = pmu_ctr_stop_hw(cidx);
 
 		if (cidx > (CSR_INSTRET - CSR_CYCLE) && flag & SBI_PMU_STOP_FLAG_RESET) {
+			if (pmu_dev && pmu_dev->hw_counter_disable_irq)
+				pmu_dev->hw_counter_disable_irq(cidx);
 			phs->active_events[cidx] = SBI_PMU_EVENT_IDX_INVALID;
 			pmu_reset_hw_mhpmevent(cidx);
 		}
