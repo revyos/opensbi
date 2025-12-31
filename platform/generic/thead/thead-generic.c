@@ -125,8 +125,11 @@ static int thead_generic_extensions_init(struct sbi_hart_features *hfeatures)
 	if (errata & THEAD_QUIRK_ERRATA_THEAD_PMU)
 		thead_c9xx_register_pmu_device();
 
-	if (errata & THEAD_QUIRK_ERRATA_XTHEADSSTC)
+	if (errata & THEAD_QUIRK_ERRATA_XTHEADSSTC) {
 		sbi_hart_update_extension(scratch, SBI_HART_EXT_SSTC, false);
+		sbi_hart_update_extension(scratch,SBI_HART_EXT_XTHEADSSTC, true);
+	}
+
 	return 0;
 }
 
