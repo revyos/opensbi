@@ -44,6 +44,12 @@ static void thead_c9xx_pmu_ctr_enable_irq(uint32_t ctr_idx)
 
 static void thead_c9xx_pmu_ctr_disable_irq(uint32_t ctr_idx)
 {
+	unsigned long mip_val;
+	if (ctr_idx >= SBI_PMU_HW_CTR_MAX)
+		return;
+	mip_val = csr_read(CSR_MIP);
+	if (mip_val & BIT(THEAD_C9XX_IRQ_PMU_OVF))
+		csr_clear(THEAD_C9XX_CSR_MCOUNTEROF, BIT(ctr_idx));
 	/**
 	 * There is no need to clear the bit of mcounterwen, it will expire
 	 * after setting the csr mcountinhibit.
