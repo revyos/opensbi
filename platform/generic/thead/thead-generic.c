@@ -114,16 +114,19 @@ static int thead_generic_early_init(bool cold_boot)
 	return generic_early_init(cold_boot);
 }
 
-static int thead_pmu_extensions_init(struct sbi_hart_features *hfeatures)
+static int thead_generic_extensions_init(struct sbi_hart_features *hfeatures)
 {
 	int rc;
+	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
 
 	rc = generic_extensions_init(hfeatures);
 	if (rc)
 		return rc;
+	if (errata & THEAD_QUIRK_ERRATA_THEAD_PMU)
+		thead_c9xx_register_pmu_device();
 
-	thead_c9xx_register_pmu_device();
-
+	if (errata & THEAD_QUIRK_ERRATA_XTHEADSSTC)
+		sbi_hart_update_extension(scratch, SBI_HART_EXT_SSTC, false);
 	return 0;
 }
 
@@ -450,8 +453,7 @@ static int thead_generic_platform_init(const void *fdt, int nodeoff,
 
 	has_ecall_light = sbi_strcmp(match->compatible, "thead,light") == 0;
 	generic_platform_ops.early_init = thead_generic_early_init;
-	if (quirks->errata & THEAD_QUIRK_ERRATA_THEAD_PMU)
-		generic_platform_ops.extensions_init = thead_pmu_extensions_init;
+	generic_platform_ops.extensions_init = thead_generic_extensions_init;
 	if (quirks->errata & THEAD_QUIRK_ERRATA_LOGHT_PPU)
 		generic_platform_ops.final_init = thead_generic_final_init;
 	generic_platform_ops.vendor_ext_provider = thead_vendor_ext_provider;
