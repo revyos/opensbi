@@ -13,6 +13,7 @@
 #include <sbi/sbi_bitops.h>
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_error.h>
+#include <sbi/sbi_hart.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_timer.h>
 #include <sbi_utils/timer/aclint_mtimer.h>
@@ -81,7 +82,10 @@ static void mtimer_event_stop(void)
 		return;
 
 	/* Clear MTIMER Time Compare */
-	time_cmp = (void *)mt->mtimecmp_addr;
+	if (sbi_hart_has_extension(scratch, SBI_HART_EXT_XTHEADSSTC))
+		time_cmp = (void *)(mt->mtimecmp_addr + 0x9000);
+	else
+		time_cmp = (void *)mt->mtimecmp_addr;
 	mt->time_wr(true, -1ULL, &time_cmp[target_hart - mt->first_hartid]);
 }
 
@@ -97,7 +101,10 @@ static void mtimer_event_start(u64 next_event)
 		return;
 
 	/* Program MTIMER Time Compare */
-	time_cmp = (void *)mt->mtimecmp_addr;
+	if (sbi_hart_has_extension(scratch, SBI_HART_EXT_XTHEADSSTC))
+		time_cmp = (void *)(mt->mtimecmp_addr + 0x9000);
+	else
+		time_cmp = (void *)mt->mtimecmp_addr;
 	mt->time_wr(true, next_event,
 		    &time_cmp[target_hart - mt->first_hartid]);
 }

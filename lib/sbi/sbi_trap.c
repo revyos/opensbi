@@ -318,8 +318,16 @@ struct sbi_trap_context *sbi_trap_handler(struct sbi_trap_context *tcntx)
 		if (sbi_hart_has_extension(sbi_scratch_thishart_ptr(),
 					   SBI_HART_EXT_SMAIA))
 			rc = sbi_trap_aia_irq();
-		else
+		else {
+			/*
+			* DCACHE.CALL:
+			* | 31 - 25 | 24 - 20 | 19 - 15 | 14 - 12 | 11 - 7 | 6 - 0 |
+			*   0000000    00001     00000      000      00000  0001011
+			*/
+			if ((regs->mepc & 0x7f) == 4)
+				asm volatile(".long 0x0010000b\n");
 			rc = sbi_trap_nonaia_irq(mcause & ~MCAUSE_IRQ_MASK);
+		}
 		msg = "unhandled local interrupt";
 		goto trap_done;
 	}
