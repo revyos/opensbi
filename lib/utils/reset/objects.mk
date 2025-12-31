@@ -32,3 +32,9 @@ libsbiutils-objs-$(CONFIG_FDT_RESET_RPMI) += reset/fdt_reset_rpmi.o
 
 carray-fdt_early_drivers-$(CONFIG_FDT_RESET_SOPHGO_MCU) += fdt_reset_sophgo_mcu
 libsbiutils-objs-$(CONFIG_FDT_RESET_SOPHGO_MCU) += reset/fdt_reset_sophgo_mcu.o
+
+carray-fdt_early_drivers-$(CONFIG_FDT_RESET_SOPHGO_CPLD) += fdt_reset_sophgo_cpld
+libsbiutils-objs-$(CONFIG_FDT_RESET_SOPHGO_CPLD) += reset/fdt_reset_sophgo_cpld.o
+
+carray-fdt_early_drivers-$(CONFIG_FDT_RESET_SOPHGO_WDT) += fdt_reset_sophgo_wdt
+libsbiutils-objs-$(CONFIG_FDT_RESET_SOPHGO_WDT) += reset/fdt_reset_sophgo_wdt.o
