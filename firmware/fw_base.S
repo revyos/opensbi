@@ -349,7 +349,7 @@ _start_warm:
 	add	a4, a4, 1
 	blt	a4, s7, 1b
 2:	add	s6, a4, zero
-3:	bge	s6, s7, _start_hang
+3:	bgeu	s6, s7, _start_hang
 
 	/* Find the scratch space based on HART index */
 	lla	tp, _fw_end
@@ -647,6 +647,8 @@ memcmp:
 	.align 3
 	.globl _trap_handler
 _trap_handler:
+	sfence.vma	zero, t0
+
 	TRAP_SAVE_AND_SETUP_SP_T0
 
 	TRAP_SAVE_MEPC_MSTATUS 0

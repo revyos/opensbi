@@ -732,6 +732,8 @@
 /* Counter Overflow CSR */
 #define CSR_SCOUNTOVF			0xda0
 
+#define MCOUNTEREN_TM			(_UL(1) << 1)
+
 /* Debug/Trace Registers */
 #define CSR_TSELECT			0x7a0
 #define CSR_TDATA1			0x7a1

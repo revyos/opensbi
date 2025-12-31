@@ -25,19 +25,19 @@
 #define mb()			RISCV_FENCE(iorw,iorw)
 
 /* Read Memory barrier */
-#define rmb()			RISCV_FENCE(ir,ir)
+#define rmb()			RISCV_FENCE(ir,iorw)
 
 /* Write Memory barrier */
-#define wmb()			RISCV_FENCE(ow,ow)
+#define wmb()			RISCV_FENCE(iorw,ow)
 
 /* SMP Read & Write Memory barrier */
 #define smp_mb()		RISCV_FENCE(rw,rw)
 
 /* SMP Read Memory barrier */
-#define smp_rmb()		RISCV_FENCE(r,r)
+#define smp_rmb()		RISCV_FENCE(r,rw)
 
 /* SMP Write Memory barrier */
-#define smp_wmb()		RISCV_FENCE(w,w)
+#define smp_wmb()		RISCV_FENCE(rw,w)
 
 /* CPU relax for busy loop */
 #define cpu_relax()						\
@@ -48,11 +48,20 @@ do {								\
 
 /* clang-format on */
 
+#ifdef CONFIG_PLATFORM_SOPHGO_MANGO
+ #define __smp_store_release(p, v)   \
+ 	do {                        \
+ 		RISCV_FENCE(rw, w); \
+ 		*(p) = (v);         \
+		RISCV_FENCE(w, rw); \
+ 	} while (0)
+#else
 #define __smp_store_release(p, v)   \
 	do {                        \
 		RISCV_FENCE(rw, w); \
 		*(p) = (v);         \
 	} while (0)
+#endif
 
 #define __smp_load_acquire(p)            \
 	({                               \

@@ -60,6 +60,11 @@ static void mstatus_init(struct sbi_scratch *scratch)
 	if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_10)
 		csr_write(CSR_MCOUNTEREN, -1);
 
+	if (sbi_platform_force_emulate_time_csr(sbi_platform_thishart_ptr())) {
+		csr_clear(CSR_MCOUNTEREN, MCOUNTEREN_TM);
+		csr_clear(CSR_SCOUNTEREN, MCOUNTEREN_TM);
+	}
+
 	/* All programmable counters will start running at runtime after S-mode request */
 	if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_11)
 		csr_write(CSR_MCOUNTINHIBIT, 0xFFFFFFF8);
@@ -670,7 +675,8 @@ __pmp_skip:
 		__set_bit(__csr_id, hfeatures->csrs);
 
 	__check_csr_existence(CSR_CYCLE, SBI_HART_CSR_CYCLE);
-	__check_csr_existence(CSR_TIME, SBI_HART_CSR_TIME);
+	if (!sbi_platform_force_emulate_time_csr(sbi_platform_thishart_ptr()))
+		__check_csr_existence(CSR_TIME, SBI_HART_CSR_TIME);
 	__check_csr_existence(CSR_INSTRET, SBI_HART_CSR_INSTRET);
 
 #undef __check_csr_existence

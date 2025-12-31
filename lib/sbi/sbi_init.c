@@ -216,6 +216,7 @@ static void wake_coldboot_harts(struct sbi_scratch *scratch)
 {
 	/* Mark coldboot done */
 	__smp_store_release(&coldboot_done, 1);
+	RISCV_FENCE(w, o);
 }
 
 static unsigned long entry_count_offset;
