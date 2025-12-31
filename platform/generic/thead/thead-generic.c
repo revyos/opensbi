@@ -39,16 +39,69 @@
 #define PMP_ENTRY_END_ADDR(n)	(PMP_ENTRY_START_ADDR(n) + 4)
 #define PMP_ENTRY_CFG_ADDR(n)	(PMP_BASE_ADDR + ((n / 4) * 4))
 
+/* redefine CSR register */
+#define CSR_MXSTATUS	THEAD_C9XX_CSR_MXSTATUS
+#define CSR_MHCR		THEAD_C9XX_CSR_MHCR
+#define CSR_MCCR2		THEAD_C9XX_CSR_MCCR2
+#define CSR_MHINT		THEAD_C9XX_CSR_MHINT
+#define CSR_MHINT2_E	THEAD_C9XX_CSR_MHINT2
+#define CSR_MHINT4		THEAD_C9XX_CSR_MHINT4
+#define CSR_MSMPR		THEAD_C9XX_CSR_MSMPR
+#define CSR_SMPEN		CSR_MSMPR
+
+// csr register value by default
+static unsigned long csr_smpen;
+static unsigned long csr_mccr2;
+static unsigned long csr_mxstatus;
+static unsigned long csr_mhint;
+static unsigned long csr_mhcr;
+static unsigned long csr_mhint2;
+static unsigned long csr_mhint4;
+
+extern int hotplug_flag;
 extern const struct sbi_hsm_device light_ppu;
 static u32 selected_hartid = 0;
 static bool has_ecall_light;
+static u64 errata;
 struct thead_generic_quirks {
 	u64	errata;
 };
 
-static int thead_tlb_flush_early_init(bool cold_boot)
+
+static void cpu_performance_save(void)
 {
-	thead_register_tlb_flush_trap_handler();
+	csr_smpen = csr_read(CSR_SMPEN);
+	csr_mccr2 = csr_read(CSR_MCCR2);
+	csr_mxstatus = csr_read(CSR_MXSTATUS);
+	csr_mhint = csr_read(CSR_MHINT);
+	csr_mhcr = csr_read(CSR_MHCR);
+	csr_mhint2 = csr_read(CSR_MHINT2_E);
+	csr_mhint4 = csr_read(CSR_MHINT4);
+}
+
+static void cpu_performance_restore(void)
+{
+	csr_write(CSR_SMPEN,    csr_smpen);
+	csr_write(CSR_MCCR2,    csr_mccr2);
+	csr_write(CSR_MXSTATUS, csr_mxstatus);
+	csr_write(CSR_MHINT,    csr_mhint);
+	csr_write(CSR_MHCR,     csr_mhcr);
+	csr_write(CSR_MHINT2_E, csr_mhint2);
+	csr_write(CSR_MHINT4,   csr_mhint4);
+}
+
+static void thead_generic_final_exit()
+{
+	cpu_performance_save();
+}
+
+static int thead_generic_early_init(bool cold_boot)
+{
+	if (hotplug_flag)
+		cpu_performance_restore();
+
+	if (errata & THEAD_QUIRK_ERRATA_TLB_FLUSH)
+		thead_register_tlb_flush_trap_handler();
 
 	return generic_early_init(cold_boot);
 }
@@ -364,16 +417,17 @@ static int thead_generic_platform_init(const void *fdt, int nodeoff,
 				       const struct fdt_match *match)
 {
 	const struct thead_generic_quirks *quirks = match->data;
+	errata = quirks->errata;
 
 	has_ecall_light = sbi_strcmp(match->compatible, "thead,light") == 0;
-	if (quirks->errata & THEAD_QUIRK_ERRATA_TLB_FLUSH)
-		generic_platform_ops.early_init = thead_tlb_flush_early_init;
+	generic_platform_ops.early_init = thead_generic_early_init;
 	if (quirks->errata & THEAD_QUIRK_ERRATA_THEAD_PMU)
 		generic_platform_ops.extensions_init = thead_pmu_extensions_init;
 	if (quirks->errata & THEAD_QUIRK_ERRATA_LOGHT_PPU)
 		generic_platform_ops.final_init = thead_generic_final_init;
 	generic_platform_ops.vendor_ext_provider = thead_vendor_ext_provider;
 	generic_platform_ops.cold_boot_allowed = thead_generic_cold_boot_allowed;
+	generic_platform_ops.final_exit = thead_generic_final_exit;
 
 	return 0;
 }
