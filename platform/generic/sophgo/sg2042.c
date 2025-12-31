@@ -80,6 +80,11 @@ static bool mango_force_emulate_time_csr(void)
 	return force_emulate_time_csr;
 }
 
+static u32 mango_tlb_num_entries(void)
+{
+	return 128;
+}
+
 static int sophgo_sg2042_platform_init(const void *fdt, int nodeoff, const struct fdt_match *match)
 {
 	if (platform.hart_stack_size < 16384)
@@ -94,6 +99,7 @@ static int sophgo_sg2042_platform_init(const void *fdt, int nodeoff, const struc
 	generic_platform_ops.extensions_init = sophgo_sg2042_extensions_init;
 	generic_platform_ops.cold_boot_allowed = mango_cold_boot_allowed;
 	generic_platform_ops.force_emulate_time_csr = mango_force_emulate_time_csr;
+	generic_platform_ops.get_tlb_num_entries = mango_tlb_num_entries;
 
 	return 0;
 }
