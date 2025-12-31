@@ -16,6 +16,7 @@
 #define MANGO_BOARD_TYPE		0x80
 
 #define REG_MCU_BOARD_TYPE		0x00
+#define MANGO_BOARD_TYPE_MASK		1 << 7
 #define REG_MCU_CMD		0x03
 
 #define CMD_POWEROFF		0x02
@@ -50,7 +51,7 @@ static inline int mango_sanity_check(struct i2c_adapter *adap, uint32_t reg)
 	if (ret)
 		return ret;
 
-	if (val != MANGO_BOARD_TYPE)
+	if ((val & MANGO_BOARD_TYPE_MASK) != MANGO_BOARD_TYPE)
 		return SBI_ENODEV;
 
 	return 0;
@@ -139,7 +140,6 @@ static int mango_reset_init(const void *fdt, int nodeoff,
 	mango.adapter = adapter;
 
 	sbi_system_reset_add_device(&mango_reset_i2c);
-	fdt_del_node(fdt, nodeoff);
 
 	return 0;
 }
