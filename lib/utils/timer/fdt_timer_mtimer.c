@@ -20,6 +20,7 @@ struct timer_mtimer_quirks {
 	unsigned int	clint_mtime_offset;
 	bool		clint_without_mtime;
 	bool		has_64bit_mmio;
+	bool		use_extern_domain;
 };
 
 struct timer_mtimer_node {
@@ -87,6 +88,7 @@ static int timer_mtimer_cold_init(const void *fdt, int nodeoff,
 	/* Apply additional quirks */
 	if (quirks) {
 		mt->has_64bit_mmio = quirks->has_64bit_mmio;
+		mt->use_extern_domain = quirks->use_extern_domain;
 	}
 
 	/* Check if MTIMER device has shared MTIME address */
@@ -156,12 +158,20 @@ static const struct timer_mtimer_quirks thead_aclint_quirks = {
 	.has_64bit_mmio		= false,
 };
 
+static const struct timer_mtimer_quirks thead_clint_sep_quirks = {
+	.clint_mtime_offset	= CLINT_MTIMER_OFFSET,
+	.clint_without_mtime	= true,
+	.use_extern_domain 	= true,
+};
+
 static const struct fdt_match timer_mtimer_match[] = {
 	{ .compatible = "mips,p8700-aclint-mtimer" },
 	{ .compatible = "riscv,clint0", .data = &sifive_clint_quirks },
 	{ .compatible = "sifive,clint0", .data = &sifive_clint_quirks },
 	{ .compatible = "sifive,clint2", .data = &sifive_clint_quirks },
 	{ .compatible = "thead,c900-clint", .data = &thead_clint_quirks },
+	{ .compatible = "thead,c900-clint-mtimer",
+	  .data = &thead_clint_sep_quirks },
 	{ .compatible = "thead,c900-aclint-mtimer",
 	  .data = &thead_aclint_quirks },
 	{ .compatible = "riscv,aclint-mtimer" },
