@@ -5,7 +5,7 @@
  *   Inochi Amaoto <inochiama@outlook.com>
  *
  */
-
+#include <libfdt.h>
 #include <platform_override.h>
 #include <thead/c9xx_errata.h>
 #include <thead/c9xx_pmu.h>
@@ -19,7 +19,18 @@
 
 #define SOPHGO_SG2042_TIMER_BASE	0x70ac000000ULL
 #define SOPHGO_SG2042_TIMER_SIZE	0x10000UL
-#define SOPHGO_SG2042_TIMER_NUM		16
+
+extern struct sbi_platform platform;
+static u32 selected_hartid = -1;
+static bool force_emulate_time_csr;
+
+static bool mango_cold_boot_allowed(u32 hartid)
+{
+        if (selected_hartid != -1)
+                return (selected_hartid == hartid);
+
+        return (hartid < 64);
+}
 
 static int sophgo_sg2042_early_init(bool cold_boot)
 {
@@ -39,7 +50,7 @@ static int sophgo_sg2042_early_init(bool cold_boot)
 		return sbi_domain_root_add_memrange(
 					(ulong)SOPHGO_SG2042_TIMER_BASE,
 					SOPHGO_SG2042_TIMER_SIZE *
-					SOPHGO_SG2042_TIMER_NUM,
+					sbi_platform_hart_count(&platform),
 					MTIMER_REGION_ALIGN,
 					(SBI_DOMAIN_MEMREGION_MMIO |
 					 SBI_DOMAIN_MEMREGION_M_READABLE |
@@ -58,16 +69,35 @@ static int sophgo_sg2042_extensions_init(struct sbi_hart_features *hfeatures)
 		return rc;
 
 	thead_c9xx_register_pmu_device();
+	hfeatures->mhpm_mask = 0x0003e3f8;
+	hfeatures->mhpm_bits = 64;
+
 	return 0;
+}
+
+static bool mango_force_emulate_time_csr(void)
+{
+	return force_emulate_time_csr;
 }
 
 static int sophgo_sg2042_platform_init(const void *fdt, int nodeoff, const struct fdt_match *match)
 {
+	if (platform.hart_stack_size < 16384)
+		platform.hart_stack_size = 16384;
+
+	if (fdt_node_offset_by_compatible(fdt, 0, "sophgo,sg2042-global-mtimer") > 0)
+		force_emulate_time_csr = true;
+	else
+		force_emulate_time_csr = false;
+
 	generic_platform_ops.early_init = sophgo_sg2042_early_init;
 	generic_platform_ops.extensions_init = sophgo_sg2042_extensions_init;
+	generic_platform_ops.cold_boot_allowed = mango_cold_boot_allowed;
+	generic_platform_ops.force_emulate_time_csr = mango_force_emulate_time_csr;
 
 	return 0;
 }
+
 
 static const struct fdt_match sophgo_sg2042_match[] = {
 	{ .compatible = "sophgo,sg2042" },
