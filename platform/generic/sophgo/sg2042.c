@@ -14,6 +14,7 @@
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_string.h>
+#include <sbi/sbi_tlb.h>
 #include <sbi_utils/fdt/fdt_helper.h>
 #include <sbi_utils/timer/aclint_mtimer.h>
 
@@ -110,6 +111,32 @@ static int mango_final_init(bool cold_boot)
 	return generic_final_init(cold_boot);
 }
 
+static void sophgo_sg2042_jtlb_local_sfence_vma(struct sbi_tlb_info *tinfo)
+{
+	__asm__ __volatile__("sfence.vma");
+}
+
+static void sophgo_sg2042_jtlb_local_hfence_vma_asid(struct sbi_tlb_info *tinfo)
+{
+	unsigned long start = tinfo->start;
+	unsigned long size  = tinfo->size;
+	unsigned long asid  = tinfo->asid;
+
+	/* Flush entire MM context for a given ASID */
+	if ((start == 0 && size == 0) || (size == SBI_TLB_FLUSH_ALL)) {
+		__asm__ __volatile__("sfence.vma x0, %0"
+				     :
+				     : "r"(asid)
+				     : "memory");
+		return;
+	}
+
+	__asm__ __volatile__("sfence.vma x0, %0"
+			     :
+			     : "r"(asid)
+			     : "memory");
+}
+
 static int sophgo_sg2042_platform_init(const void *fdt, int nodeoff, const struct fdt_match *match)
 {
 	if (platform.hart_stack_size < 16384)
@@ -126,6 +153,8 @@ static int sophgo_sg2042_platform_init(const void *fdt, int nodeoff, const struc
 	generic_platform_ops.force_emulate_time_csr = mango_force_emulate_time_csr;
 	generic_platform_ops.get_tlb_num_entries = mango_tlb_num_entries;
 	generic_platform_ops.final_init = mango_final_init;
+	generic_platform_ops.local_sfence_vma = sophgo_sg2042_jtlb_local_sfence_vma;
+	generic_platform_ops.local_sfence_vma_asid = sophgo_sg2042_jtlb_local_hfence_vma_asid;
 
 	return 0;
 }
