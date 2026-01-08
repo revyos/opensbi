@@ -56,6 +56,7 @@ struct sbi_domain_memregion;
 struct sbi_ecall_return;
 struct sbi_trap_regs;
 struct sbi_hart_features;
+struct sbi_tlb_info;
 union sbi_ldst_data;
 
 /** Possible feature flags of a platform */
@@ -75,6 +76,9 @@ enum sbi_platform_features {
 struct sbi_platform_operations {
 	/* Check if specified HART is allowed to do cold boot */
 	bool (*cold_boot_allowed)(u32 hartid);
+
+	/* Check if platform force emulate time csr, instead of using csr directly */
+	bool (*force_emulate_time_csr)(void);
 
 	/* Check if platform requires single firmware region */
 	bool (*single_fw_region)(void);
@@ -124,6 +128,20 @@ struct sbi_platform_operations {
 
 	/** Get tlb fifo num entries*/
 	u32 (*get_tlb_num_entries)(void);
+
+	void (*local_fence_i)(struct sbi_tlb_info *tinfo);
+
+	void (*local_sfence_vma)(struct sbi_tlb_info *tinfo);
+
+	void (*local_sfence_vma_asid)(struct sbi_tlb_info *tinfo);
+
+	void (*local_hfence_gvma_vmid)(struct sbi_tlb_info *tinfo);
+
+	void (*local_hfence_gvma)(struct sbi_tlb_info *tinfo);
+
+	void (*local_hfence_vvma_asid)(struct sbi_tlb_info *tinfo);
+
+	void (*local_hfence_vvma)(struct sbi_tlb_info *tinfo);
 
 	/** Initialize platform timer during cold boot */
 	int (*timer_init)(void);
@@ -305,6 +323,81 @@ static inline u32 sbi_platform_tlb_fifo_num_entries(const struct sbi_platform *p
 	return sbi_hart_count();
 }
 
+static inline u32 sbi_platform_local_fence_i(
+					const struct sbi_platform *plat,
+					struct sbi_tlb_info *tinfo)
+{
+	if (plat && sbi_platform_ops(plat)->local_fence_i) {
+		sbi_platform_ops(plat)->local_fence_i(tinfo);
+		return 0;
+	}
+	return SBI_ENOTSUPP;
+}
+
+static inline u32 sbi_platform_local_sfence_vma(
+					const struct sbi_platform *plat,
+					struct sbi_tlb_info *tinfo)
+{
+	if (plat && sbi_platform_ops(plat)->local_sfence_vma) {
+		sbi_platform_ops(plat)->local_sfence_vma(tinfo);
+		return 0;
+	}
+	return SBI_ENOTSUPP;
+}
+
+static inline u32 sbi_platform_local_sfence_vma_asid(
+					const struct sbi_platform *plat,
+					struct sbi_tlb_info *tinfo)
+{
+	if (plat && sbi_platform_ops(plat)->local_sfence_vma_asid) {
+		sbi_platform_ops(plat)->local_sfence_vma_asid(tinfo);
+		return 0;
+	}
+	return SBI_ENOTSUPP;
+}
+
+static inline u32 sbi_platform_local_hfence_gvma_vmid(
+					const struct sbi_platform *plat,
+					struct sbi_tlb_info *tinfo)
+{
+	if (plat && sbi_platform_ops(plat)->local_hfence_gvma_vmid) {
+		sbi_platform_ops(plat)->local_hfence_gvma_vmid(tinfo);
+		return 0;
+	}
+	return SBI_ENOTSUPP;
+}
+
+static inline u32 sbi_platform_local_hfence_gvma(
+					const struct sbi_platform *plat,
+					struct sbi_tlb_info *tinfo)
+{
+	if (plat && sbi_platform_ops(plat)->local_hfence_gvma) {
+		sbi_platform_ops(plat)->local_hfence_gvma(tinfo);
+		return 0;
+	}
+	return SBI_ENOTSUPP;
+}
+static inline u32 sbi_platform_local_hfence_vvma_asid(
+					const struct sbi_platform *plat,
+					struct sbi_tlb_info *tinfo)
+{
+	if (plat && sbi_platform_ops(plat)->local_hfence_vvma_asid) {
+		sbi_platform_ops(plat)->local_hfence_vvma_asid(tinfo);
+		return 0;
+	}
+	return SBI_ENOTSUPP;
+}
+static inline u32 sbi_platform_local_hfence_vvma(
+					const struct sbi_platform *plat,
+					struct sbi_tlb_info *tinfo)
+{
+	if (plat && sbi_platform_ops(plat)->local_hfence_vvma) {
+		sbi_platform_ops(plat)->local_hfence_vvma(tinfo);
+		return 0;
+	}
+	return SBI_ENOTSUPP;
+}
+
 /**
  * Get total number of HARTs supported by the platform
  *
@@ -348,6 +441,20 @@ static inline bool sbi_platform_cold_boot_allowed(
 	if (plat && sbi_platform_ops(plat)->cold_boot_allowed)
 		return sbi_platform_ops(plat)->cold_boot_allowed(hartid);
 	return true;
+}
+
+/**
+ * Check whether given platform should force emulate time CSR
+ *
+ * @param plat pointer to struct sbi_platform
+ *
+ * @return true such platform force emulate time CSR, false otherwise
+ */
+static inline bool sbi_platform_force_emulate_time_csr(const struct sbi_platform *plat)
+{
+	if (plat && sbi_platform_ops(plat)->force_emulate_time_csr)
+		return sbi_platform_ops(plat)->force_emulate_time_csr();
+	return false;
 }
 
 /**
