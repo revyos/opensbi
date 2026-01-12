@@ -25,6 +25,8 @@
 #include <sbi/sbi_system.h>
 #include <sbi/sbi_timer.h>
 #include <sbi/sbi_console.h>
+#include <sbi_utils/cache/cacheflush.h>
+#include <sbi_utils/psci/psci.h>
 
 #define __sbi_hsm_hart_change_state(hdata, oldstate, newstate)		\
 ({									\
@@ -79,8 +81,11 @@ int sbi_hsm_hart_get_state(const struct sbi_domain *dom, u32 hartid)
 
 	if (!sbi_domain_is_assigned_hart(dom, hartindex))
 		return SBI_EINVAL;
-
+#ifdef CONFIG_ARM_PSCI_SUPPORT
+	return psci_affinity_info(hartid, 0);
+#else
 	return __sbi_hsm_hart_get_state(hartindex);
+#endif
 }
 
 /*
@@ -137,7 +142,7 @@ int sbi_hsm_hart_interruptible_mask(const struct sbi_domain *dom,
 }
 
 void __noreturn sbi_hsm_hart_start_finish(struct sbi_scratch *scratch,
-					  u32 hartid)
+					  u32 hartid, bool cool_boot)
 {
 	unsigned long next_arg1;
 	unsigned long next_addr;
@@ -154,11 +159,28 @@ void __noreturn sbi_hsm_hart_start_finish(struct sbi_scratch *scratch,
 	next_mode = scratch->next_mode;
 	hsm_start_ticket_release(hdata);
 
+#ifdef CONFIG_PLATFORM_SPACEMIT_K1
+	/**
+	 * clean the cache : .data/bss section & local scratch & local sp
+	 * let the second hart can view the data
+	 * */
+	if (cool_boot) {
+		csi_flush_dcache_all();
+		csi_flush_l2_cache(0);
+	}
+#endif
 	sbi_hart_switch_mode(hartid, next_arg1, next_addr, next_mode, false);
 }
 
 static void sbi_hsm_hart_wait(struct sbi_scratch *scratch)
 {
+#ifdef CONFIG_ARM_PSCI_SUPPORT
+	struct sbi_hsm_data *hdata = sbi_scratch_offset_ptr(scratch,
+							    hart_data_offset);
+
+	while (atomic_read(&hdata->state) != SBI_HSM_STATE_START_PENDING) {
+	}
+#else
 	unsigned long saved_mie;
 	struct sbi_hsm_data *hdata = sbi_scratch_offset_ptr(scratch,
 							    hart_data_offset);
@@ -189,6 +211,7 @@ static void sbi_hsm_hart_wait(struct sbi_scratch *scratch)
 	 * No need to clear IPI here because the sbi_ipi_init() will
 	 * clear it for current HART.
 	 */
+#endif
 }
 
 const struct sbi_hsm_device *sbi_hsm_get_device(void)

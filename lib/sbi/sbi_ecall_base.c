@@ -14,6 +14,7 @@
 #include <sbi/sbi_trap.h>
 #include <sbi/sbi_version.h>
 #include <sbi/riscv_asm.h>
+#include <sbi_utils/cache/cacheflush.h>
 
 static int sbi_ecall_base_probe(unsigned long extid, unsigned long *out_val)
 {
@@ -60,6 +61,11 @@ static int sbi_ecall_base_handler(unsigned long extid, unsigned long funcid,
 		break;
 	case SBI_EXT_BASE_GET_MIMPID:
 		out->value = csr_read(CSR_MIMPID);
+		break;
+	case SBI_EXT_BASE_FLUSH_CACHE_ALL:
+		csi_flush_dcache_all();
+		/* there has no need to flush l2 cache here */
+		/* csi_flush_l2_cache(); */
 		break;
 	case SBI_EXT_BASE_PROBE_EXT:
 		ret = sbi_ecall_base_probe(regs->a0, &out->value);
