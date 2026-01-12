@@ -1,0 +1,55 @@
+name: k1-opensbi
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+
+env:
+  mainline_toolchain: https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2024.04.12
+  mainline_toolchain_file_name: riscv64-glibc-ubuntu-22.04-gcc-nightly-2024.04.12-nightly.tar.gz
+  wget_alias: 'wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 -t 0'
+  ARCH: riscv
+  CROSS_COMPILE: riscv64-unknown-linux-gnu-
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [gcc-13]
+
+    steps:
+      - name: Install software
+        run: |
+              sudo apt update && \
+              sudo apt install -y gdisk dosfstools g++-12-riscv64-linux-gnu cpp-12-riscv64-linux-gnu build-essential \
+                                  libncurses-dev gawk flex bison openssl libssl-dev tree u-boot-tools \
+                                  dkms libelf-dev libudev-dev libpci-dev libiberty-dev autoconf device-tree-compiler
+
+      - name: Checkout opensbi
+        uses: actions/checkout@v4
+
+      - name: opensbi compile
+        run: |
+              mkdir output
+              ${wget_alias} ${mainline_toolchain}/${mainline_toolchain_file_name}
+              tar -xvf ${mainline_toolchain_file_name} -C /opt
+              export PATH="/opt/riscv/bin:$PATH"
+              ${CROSS_COMPILE}gcc -v
+
+              pushd $PWD
+                make PLATFORM=generic -j`nproc`
+                cp -v build/platform/generic/firmware/fw_dynamic.itb output/
+              popd
+              tree ${GITHUB_WORKSPACE}/output
+
+      - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v4
+        with:
+          name: k1-opensbi-${{ matrix.name }}
+          path: output/fw_dynamic.itb
+          retention-days: 30
