@@ -120,6 +120,9 @@ void uart8250_device_init(struct uart8250_device *dev, unsigned long base,
 		bdiv = (dev->in_freq + 8 * dev->baudrate) /
 		       (16 * dev->baudrate);
 	}
+#ifdef CONFIG_PLATFORM_SPACEMIT_K1X
+	caps |= UART_CAP_UUE;
+#endif
 
 	/* Disable all interrupts */
 	set_reg(dev, UART_IER_OFFSET, (caps & UART_CAP_UUE) ?
