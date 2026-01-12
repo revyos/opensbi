@@ -42,7 +42,7 @@ jobs:
               ${CROSS_COMPILE}gcc -v
 
               pushd $PWD
-                make PLATFORM=generic PLATFORM_RISCV_ISA=rv64imafdc_zicsr_zifencei_zicbom -j`nproc`
+                make PLATFORM=generic PLATFORM_DEFCONFIG=k1_defconfig PLATFORM_RISCV_ISA=rv64imafdc_zicsr_zifencei_zicbom -j`nproc`
                 cp -v build/platform/generic/firmware/fw_dynamic.itb output/
               popd
               tree ${GITHUB_WORKSPACE}/output

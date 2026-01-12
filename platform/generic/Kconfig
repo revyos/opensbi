@@ -98,7 +98,7 @@ config PLATFORM_MIPS_P8700
 
 config PLATFORM_SPACEMIT_K1
 	bool "Spacemit K1 support"
-	select FDT_HSM_SPACEMIT
+#	select FDT_HSM_SPACEMIT
 	default n
 
 config PLATFORM_SPACEMIT_K1PRO
