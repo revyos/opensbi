@@ -255,12 +255,19 @@ static bool spacemit_cold_boot_allowed(u32 hartid)
 	return !hartid;
 }
 
+static int spacemit_k1_extensions_init(struct sbi_hart_features *hfeatures)
+{
+	__set_bit(SBI_HART_EXT_ZICBOZ, hfeatures->extensions);
+	return generic_extensions_init(hfeatures);
+}
+
 static int spacemit_k1_platform_init(const void *fdt, int nodeoff,
 				     const struct fdt_match *match)
 {
 	generic_platform_ops.early_init = spacemit_k1_early_init;
 	generic_platform_ops.cold_boot_allowed = spacemit_cold_boot_allowed;
 	generic_platform_ops.final_init = spacemit_k1_final_init;
+	generic_platform_ops.extensions_init = spacemit_k1_extensions_init;
 
 	return 0;
 }
