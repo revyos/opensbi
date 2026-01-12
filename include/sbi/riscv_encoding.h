@@ -780,6 +780,9 @@
 #define CSR_MVIPH			0x319
 #define CSR_MIPH			0x354
 
+#define CSR_TCMCFG			0x5DB
+#define CSR_FEATURECTL			0xbf9
+
 /* Vector extension registers */
 #define CSR_VSTART			0x8
 #define CSR_VL				0xc20
