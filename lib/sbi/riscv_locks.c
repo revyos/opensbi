@@ -67,6 +67,7 @@ void spin_lock(spinlock_t *lock)
 #else
 #error "need A or Zaamo or Zalrsc"
 #endif
+		"fence w, o\n"
 
 		/* Did we get the lock? */
 		"	srli	%1, %0, %6\n"
@@ -87,4 +88,5 @@ void spin_lock(spinlock_t *lock)
 void spin_unlock(spinlock_t *lock)
 {
 	__smp_store_release(&lock->owner, lock->owner + 1);
+	RISCV_FENCE(w, o);
 }
