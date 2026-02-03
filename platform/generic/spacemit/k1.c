@@ -236,16 +236,19 @@ static int spacemit_k1_early_init(bool cold_boot)
  */
 static int spacemit_k1_final_init(bool cold_boot)
 {
+	int rc;
 #ifdef CONFIG_ARM_PSCI_SUPPORT
 	/* for clod boot, we build the cpu topology structure */
 	if (cold_boot) {
 		sbi_hsm_set_device(&spacemit_hsm_ops);
 		/* register system-suspend ops */
 		sbi_system_suspend_set_device(&spacemit_system_suspend_ops);
-		return psci_setup();
+		rc = psci_setup();
+		if (rc)
+			return rc;
 	}
 #endif
-	return 0;
+	return generic_final_init(cold_boot);
 }
 
 static bool spacemit_cold_boot_allowed(u32 hartid)
