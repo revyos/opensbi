@@ -24,7 +24,10 @@ static bool hpm_allowed(int hpm_num, ulong prev_mode, bool virt)
 
 	if (prev_mode <= PRV_S) {
 		if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_10) {
-			cen &= csr_read(CSR_MCOUNTEREN);
+			/*
+			 * Don't check mcounteren here. We use that to support
+			 * forced emluation.
+			 */
 			if (virt)
 				cen &= csr_read(CSR_HCOUNTEREN);
 		} else {
