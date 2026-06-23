@@ -1138,6 +1138,10 @@ int sbi_insn_emu_op_v(ulong insn, struct sbi_trap_regs *regs)
 		}
 	}
 
+	if (sbi_regs_from_virt(regs))
+		csr_set(CSR_VSSTATUS, MSTATUS_VS);
+	regs->mstatus |= MSTATUS_VS;
+
 	regs->mepc += 4;
 
 	return 0;
