@@ -20,6 +20,7 @@
 #include <sbi/sbi_irqchip.h>
 #include <sbi/sbi_trap_ldst.h>
 #include <sbi/sbi_pmu.h>
+#include <sbi/sbi_platform.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_sse.h>
 #include <sbi/sbi_timer.h>
@@ -285,6 +286,19 @@ static int sbi_trap_aia_irq(void)
 	return 0;
 }
 
+#if __riscv_xlen > 32 && defined(CONFIG_EMU_SUPM)
+static inline bool sbi_pm_changes_ptr(ulong ptr, struct sbi_scratch *scratch)
+{
+	return scratch->sw_pm &&
+	       ptr != (ulong)((long)(ptr << scratch->sw_pm) >> scratch->sw_pm);
+}
+
+static inline void sbi_mask_ptr(ulong *pptr, struct sbi_scratch *scratch)
+{
+	*pptr = (long)(*pptr << scratch->sw_pm) >> scratch->sw_pm;
+}
+#endif
+
 /**
  * Handle trap/interrupt
  *
@@ -345,11 +359,29 @@ struct sbi_trap_context *sbi_trap_handler(struct sbi_trap_context *tcntx)
 		msg = "ecall handler failed";
 		break;
 	case CAUSE_LOAD_ACCESS:
+#if __riscv_xlen > 32 && defined(CONFIG_EMU_SUPM)
+		if (sbi_pm_changes_ptr(trap->tval, scratch)) {
+			sbi_mask_ptr(&tcntx->trap.tval, scratch);
+			/* redirect to misaligned load handler */
+			rc  = sbi_misaligned_load_handler(tcntx);
+			msg = "pointer masking load handler failed";
+			break;
+		}
+#endif
 		sbi_pmu_ctr_incr_fw(SBI_PMU_FW_ACCESS_LOAD);
 		rc  = sbi_load_access_handler(tcntx);
 		msg = "load fault handler failed";
 		break;
 	case CAUSE_STORE_ACCESS:
+#if __riscv_xlen > 32 && defined(CONFIG_EMU_SUPM)
+		if (sbi_pm_changes_ptr(trap->tval, scratch)) {
+			sbi_mask_ptr(&tcntx->trap.tval, scratch);
+			/* redirect to misaligned store handler */
+			rc  = sbi_misaligned_store_handler(tcntx);
+			msg = "pointer masking store handler failed";
+			break;
+		}
+#endif
 		sbi_pmu_ctr_incr_fw(SBI_PMU_FW_ACCESS_STORE);
 		rc  = sbi_store_access_handler(tcntx);
 		msg = "store fault handler failed";
@@ -358,6 +390,47 @@ struct sbi_trap_context *sbi_trap_handler(struct sbi_trap_context *tcntx)
 		rc  = sbi_double_trap_handler(tcntx);
 		msg = "double trap handler failed";
 		break;
+#if __riscv_xlen > 32 && defined(CONFIG_EMU_SUPM)
+	case CAUSE_FETCH_PAGE_FAULT:
+		if (sbi_pm_changes_ptr(regs->mepc, scratch)) {
+			/* mask the program counter and try to continue */
+			sbi_mask_ptr(&regs->mepc, scratch);
+			rc  = 0;
+			msg = "pointer masking fetch handler failed";
+		}
+		else {
+			/* If the trap came from S or U mode, redirect it there */
+			msg = "trap redirect failed (fetch page fault)";
+			rc  = sbi_trap_redirect(regs, trap);
+		}
+		break;
+	case CAUSE_LOAD_PAGE_FAULT:
+		if (sbi_pm_changes_ptr(trap->tval, scratch)) {
+			sbi_mask_ptr(&tcntx->trap.tval, scratch);
+			/* redirect to misaligned load handler */
+			rc  = sbi_misaligned_load_handler(tcntx);
+			msg = "pointer masking load handler failed";
+		}
+		else {
+			/* If the trap came from S or U mode, redirect it there */
+			msg = "trap redirect failed (load page fault)";
+			rc  = sbi_trap_redirect(regs, trap);
+		}
+		break;
+	case CAUSE_STORE_PAGE_FAULT:
+		if (sbi_pm_changes_ptr(trap->tval, scratch)) {
+			sbi_mask_ptr(&tcntx->trap.tval, scratch);
+			/* redirect to misaligned store handler */
+			rc  = sbi_misaligned_store_handler(tcntx);
+			msg = "pointer masking store handler failed";
+		}
+		else {
+			/* If the trap came from S or U mode, redirect it there */
+			msg = "trap redirect failed (store page fault)";
+			rc  = sbi_trap_redirect(regs, trap);
+		}
+		break;
+#endif
 	default:
 		/* If the trap came from S or U mode, redirect it there */
 		msg = "trap redirect failed";
@@ -373,5 +446,43 @@ trap_done:
 		sbi_sse_process_pending_events(regs);
 
 	sbi_trap_set_context(scratch, tcntx->prev_context);
+	return tcntx;
+}
+
+/**
+ * Default Resumable NMI (RNMI) handler
+ *
+ * This function is called from the _trap_rnmi_handler assembly code.
+ * It provides a simple wrapper that calls the platform-specific
+ * NMI handler if registered. If no handler is registered, it prints
+ * diagnostic information and hangs, similar to unhandled traps.
+ *
+ * Note: The trap context stores NMI CSR values (MNCAUSE, MNEPC, MNSTATUS)
+ * in the generic trap context fields (cause, mepc, mstatus).
+ *
+ * @param tcntx Pointer to trap context (saved on stack)
+ * @return Same trap context pointer (needed for restore macros)
+ */
+struct sbi_trap_context *sbi_trap_rnmi_handler(struct sbi_trap_context *tcntx)
+{
+	int rc;
+	const struct sbi_platform *plat = sbi_platform_thishart_ptr();
+	const struct sbi_platform_operations *ops = sbi_platform_ops(plat);
+
+	/* Call platform-specific NMI handler if registered */
+	if (ops && ops->rnmi_handler) {
+		rc = ops->rnmi_handler(tcntx);
+		if (rc) {
+			/* Platform handler failed to handle NMI */
+			sbi_trap_error("platform NMI handler failed", rc, tcntx);
+		}
+		return tcntx;
+	}
+
+	/* No platform handler - treat as unhandled NMI */
+	sbi_trap_error("unhandled NMI (no platform rnmi_handler)",
+		       SBI_ENOTSUPP, tcntx);
+
+	/* Never returns */
 	return tcntx;
 }

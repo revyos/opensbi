@@ -87,6 +87,10 @@
 #define RPMI_DEF_TX_TIMEOUT			20
 #define RPMI_DEF_RX_TIMEOUT			20
 
+/** RPMI Notification event header constructor */
+#define RPMI_NOTIF_EVENT_HDR(eid, dlen)		((u32)(eid) << 16) | \
+						 ((u32)(dlen) & 0xFFFF)
+
 /**
  * Common macro to generate composite version from major
  * and minor version numbers.
@@ -220,6 +224,8 @@ enum rpmi_servicegroup_id {
 	RPMI_SRVGRP_CLOCK = 0x0008,
 	RPMI_SRVGRP_DEVICE_POWER = 0x0009,
 	RPMI_SRVGRP_PERFORMANCE = 0x0000A,
+	RPMI_SRVGRP_MANAGEMENT_MODE = 0x000B,
+	RPMI_SRVGRP_LOGGING = 0x000E,
 	RPMI_SRVGRP_ID_MAX_COUNT,
 
 	/* Reserved range for service groups */
@@ -231,14 +237,24 @@ enum rpmi_servicegroup_id {
 	RPMI_SRVGRP_VENDOR_END = 0xFFFF,
 };
 
+/** RPMI event notification state IDs */
+enum rpmi_event_notification_state {
+	RPMI_EVENT_NOTIF_DISABLE_STATE = 0,
+	RPMI_EVENT_NOTIF_ENABLE_STATE = 1,
+	RPMI_EVENT_NOTIF_RET_CURR_STATE = 2,
+	RPMI_EVENT_NOTIF_MAX_COUNT = 3,
+};
+
 /** RPMI enable notification request */
 struct rpmi_enable_notification_req {
 	u32 eventid;
+	u32 req_state;
 };
 
 /** RPMI enable notification response */
 struct rpmi_enable_notification_resp {
 	s32 status;
+	u32 current_state;
 };
 
 /** RPMI Base ServiceGroup Service IDs */
@@ -845,6 +861,33 @@ enum rpmi_performance_service_id {
 	RPMI_PERF_SRV_MAX_COUNT,
 };
 
+/** RPMI Performance ServiceGroup Notification Event IDs */
+enum rpmi_performance_event_id {
+	RPMI_PERF_EVENT_POWER_CHANGE = 0x01,
+	RPMI_PERF_EVENT_LIMIT_CHANGE = 0x02,
+	RPMI_PERF_EVENT_LEVEL_CHANGE = 0x03,
+	RPMI_PERF_EVENT_MAX_COUNT,
+};
+
+/** RPMI Performance power change notification data */
+struct rpmi_perf_event_power_change {
+	u32 domain_id;
+	u32 power_uw;
+};
+
+/** RPMI Performance limit change notification data */
+struct rpmi_perf_event_limit_change {
+	u32 domain_id;
+	u32 max_level;
+	u32 min_level;
+};
+
+/** RPMI Performance level change notification data */
+struct rpmi_perf_event_level_change {
+	u32 domain_id;
+	u32 level;
+};
+
 struct rpmi_perf_get_num_domain_resp {
 	s32 status;
 	u32 num_domains;
@@ -856,6 +899,16 @@ struct rpmi_perf_get_attrs_req {
 
 struct rpmi_perf_get_attrs_resp {
 	s32 status;
+#define RPMI_PERF_DOMAIN_ATTRS_FLAGS_MASK			(7U << 0)
+#define RPMI_PERF_DOMAIN_ATTRS_FLAGS_FASTCHANNEL_SUPP_POS	0
+#define RPMI_PERF_DOMAIN_ATTRS_FLAGS_PERF_LVL_CHG_SUPP_POS	1
+#define RPMI_PERF_DOMAIN_ATTRS_FLAGS_PERF_LIMIT_CHG_SUPP_POS	2
+#define RPMI_PERF_DOMAIN_ATTRS_FLAGS_FASTCHANNEL_SUPP		\
+				(1U << RPMI_PERF_DOMAIN_ATTRS_FLAGS_FASTCHANNEL_SUPP_POS)
+#define RPMI_PERF_DOMAIN_ATTRS_FLAGS_PERF_LVL_CHG_SUPP		\
+				(1U << RPMI_PERF_DOMAIN_ATTRS_FLAGS_PERF_LVL_CHG_SUPP_POS)
+#define RPMI_PERF_DOMAIN_ATTRS_FLAGS_PERF_LIMIT_CHG_SUPP	\
+				(1U << RPMI_PERF_DOMAIN_ATTRS_FLAGS_PERF_LIMIT_CHG_SUPP_POS)
 	u32 flags;
 	u32 num_level;
 	u32 latency;
@@ -935,16 +988,80 @@ struct rpmi_perf_get_fast_chn_attr_req {
 
 struct rpmi_perf_get_fast_chn_attr_resp {
 	s32 status;
+#define RPMI_PERF_FASTCHAN_ATTRS_FLAGS_MASK		(7U << 0)
+#define RPMI_PERF_FASTCHAN_ATTRS_FLAGS_DB_SUPP_POS	0
+#define RPMI_PERF_FASTCHAN_ATTRS_FLAGS_DB_WIDTH_POS	1
+#define RPMI_PERF_FASTCHAN_ATTRS_FLAGS_DB_SUPP		\
+				(1U << RPMI_PERF_FASTCHAN_ATTRS_FLAGS_DB_SUPP_POS)
+#define RPMI_PERF_FASTCHAN_ATTRS_FLAGS_DB_WIDTH_MASK	\
+				(3U << RPMI_PERF_FASTCHAN_ATTRS_FLAGS_DB_WIDTH_POS)
+#define RPMI_PERF_FASTCHAN_ATTRS_FLAGS_DB_WIDTH_8	\
+				(0U << RPMI_PERF_FASTCHAN_ATTRS_FLAGS_DB_WIDTH_POS)
+#define RPMI_PERF_FASTCHAN_ATTRS_FLAGS_DB_WIDTH_16	\
+				(1U << RPMI_PERF_FASTCHAN_ATTRS_FLAGS_DB_WIDTH_POS)
+#define RPMI_PERF_FASTCHAN_ATTRS_FLAGS_DB_WIDTH_32	\
+				(2U << RPMI_PERF_FASTCHAN_ATTRS_FLAGS_DB_WIDTH_POS)
 	u32 flags;
 	u32 region_offset_low;
 	u32 region_offset_high;
 	u32 region_size;
 	u32 db_addr_low;
 	u32 db_addr_high;
-	u32 db_id_low;
-	u32 db_id_high;
-	u32 db_perserved_low;
-	u32 db_perserved_high;
+	u32 db_write_value;
+};
+
+/** RPMI MM ServiceGroup Service IDs */
+enum rpmi_mm_service_id {
+	RPMI_MM_SRV_ENABLE_NOTIFICATION = 0x01,
+	RPMI_MM_SRV_GET_ATTRIBUTES = 0x02,
+	RPMI_MM_SRV_COMMUNICATE = 0x03,
+	RPMI_MM_SRV_MAX_COUNT,
+};
+
+/** RPMI MM ServiceGroup Get Attributes main struct */
+struct rpmi_mm_attributes {
+	u32 mm_version;
+	u32 shmem_addr_lo;
+	u32 shmem_addr_hi;
+	u32 shmem_size;
+};
+
+/** RPMI MM ServiceGroup Get Attributes response struct */
+struct rpmi_mm_get_attributes_rsp {
+	s32 status;
+	struct rpmi_mm_attributes mma;
+};
+
+/** RPMI MM ServiceGroup Communicate request struct */
+struct rpmi_mm_communicate_req {
+	u32 mm_comm_ipdata_off;
+	u32 mm_comm_ipdata_size;
+	u32 mm_comm_opdata_off;
+	u32 mm_comm_opdata_size;
+};
+
+/** RPMI MM ServiceGroup Communicate response struct */
+struct rpmi_mm_communicate_rsp {
+	s32 status;
+	u32 mm_comm_retdata_size;
+};
+
+/** RPMI LOGGING ServiceGroup Service IDs */
+enum rpmi_logging_service_id {
+	RPMI_LOGGING_SRV_ENABLE_NOTIFICATION = 0x01,
+	RPMI_LOGGING_SRV_LOG_DATA = 0x02,
+	RPMI_LOGGING_SRV_MAX_COUNT,
+};
+
+struct rpmi_logging_log_data_req {
+	u32 type;
+	u32 num_dwords;
+#define MAX_LOGGING_DLEN  ((RPMI_MSG_DATA_SIZE(RPMI_SLOT_SIZE_MIN) - (sizeof(u32) * 2)) / sizeof(u32))
+	u32 data[MAX_LOGGING_DLEN];
+};
+
+struct rpmi_logging_log_data_resp {
+	s32 status;
 };
 
 #endif /* !__RPMI_MSGPROT_H__ */

@@ -70,7 +70,7 @@ static void mstatus_init(struct sbi_scratch *scratch)
 	 */
 	mhpmevent_init_val |= (MHPMEVENT_OF | MHPMEVENT_MINH);
 	for (cidx = 0; cidx <= 28; cidx++) {
-		if (!(mhpm_mask & 1 << (cidx + 3)))
+		if (!(mhpm_mask & 1UL << (cidx + 3)))
 			continue;
 #if __riscv_xlen == 32
 		csr_write_num(CSR_MHPMEVENT3 + cidx,
@@ -137,6 +137,9 @@ static void mstatus_init(struct sbi_scratch *scratch)
 	if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_12) {
 		menvcfg_val = csr_read64(CSR_MENVCFG);
 
+		/* Disable HW A/D updating by default */
+		menvcfg_val &= ~ENVCFG_ADUE;
+
 		/* Disable double trap by default */
 		menvcfg_val &= ~ENVCFG_DTE;
 
@@ -158,18 +161,17 @@ static void mstatus_init(struct sbi_scratch *scratch)
 #endif
 		__set_menvcfg_ext(SBI_HART_EXT_SSTC, ENVCFG_STCE)
 		__set_menvcfg_ext(SBI_HART_EXT_SMCDELEG, ENVCFG_CDE);
-		__set_menvcfg_ext(SBI_HART_EXT_SVADU, ENVCFG_ADUE);
-
-#undef __set_menvcfg_ext
 
 		/*
-		 * When both Svade and Svadu are present in DT, the default scheme for managing
-		 * the PTE A/D bits should use Svade. Check Svadu before Svade extension to ensure
-		 * that the ADUE bit is cleared when the Svade support are specified.
+		 * Assume only Svadu is supported when it is the only extension
+		 * present in the ISA string. Svade is assumed when neither are
+		 * present. When both are present we must default to Svade (see
+		 * the zero reset value of FWFT.PTE_AD_HW_UPDATING).
 		 */
+		if (!sbi_hart_has_extension(scratch, SBI_HART_EXT_SVADE))
+			__set_menvcfg_ext(SBI_HART_EXT_SVADU, ENVCFG_ADUE);
 
-		if (sbi_hart_has_extension(scratch, SBI_HART_EXT_SVADE))
-			menvcfg_val &= ~ENVCFG_ADUE;
+#undef __set_menvcfg_ext
 
 		csr_write64(CSR_MENVCFG, menvcfg_val);
 
@@ -396,6 +398,10 @@ const struct sbi_hart_ext_data sbi_hart_ext[] = {
 	__SBI_HART_EXT_DATA(ssstateen, SBI_HART_EXT_SSSTATEEN),
 	__SBI_HART_EXT_DATA(xsfcflushdlone, SBI_HART_EXT_XSIFIVE_CFLUSH_D_L1),
 	__SBI_HART_EXT_DATA(xsfcease, SBI_HART_EXT_XSIFIVE_CEASE),
+	__SBI_HART_EXT_DATA(smrnmi, SBI_HART_EXT_SMRNMI),
+	__SBI_HART_EXT_DATA(v, SBI_HART_EXT_V),
+	__SBI_HART_EXT_DATA(f, SBI_HART_EXT_F),
+	__SBI_HART_EXT_DATA(d, SBI_HART_EXT_D),
 };
 
 _Static_assert(SBI_HART_EXT_MAX == array_size(sbi_hart_ext),
@@ -502,7 +508,7 @@ static int hart_mhpm_get_allowed_bits(void)
 	return num_bits;
 }
 
-static int hart_detect_features(struct sbi_scratch *scratch)
+static int hart_detect_features(struct sbi_scratch *scratch, bool cold_boot)
 {
 	struct sbi_trap_info trap = {0};
 	struct sbi_hart_features *hfeatures =
@@ -514,12 +520,34 @@ static int hart_detect_features(struct sbi_scratch *scratch)
 	if (hfeatures->detected)
 		return 0;
 
-	/* Clear hart features */
-	sbi_memset(hfeatures->extensions, 0, sizeof(hfeatures->extensions));
-	sbi_memset(hfeatures->csrs, 0, sizeof(hfeatures->csrs));
-	hfeatures->pmp_count = 0;
-	hfeatures->mhpm_mask = 0;
-	hfeatures->priv_version = SBI_HART_PRIV_VER_UNKNOWN;
+	/*
+	 * Parse device tree extensions early, before any trap-based checks.
+	 * Needed to detect Smrnmi and install NMI handlers before CSR probes
+	 * that may trigger traps.
+	 */
+	rc = sbi_platform_extensions_init(sbi_platform_ptr(scratch), cold_boot);
+	if (rc)
+		return rc;
+
+	if (sbi_hart_has_extension(scratch, SBI_HART_EXT_SMRNMI)) {
+		const struct sbi_platform *plat = sbi_platform_thishart_ptr();
+		const struct sbi_platform_operations *ops = sbi_platform_ops(plat);
+		extern void _trap_rnmi_handler(void);
+		extern void _trap_handler(void);
+
+		if (!ops || !ops->smrnmi_handlers_init)
+			sbi_panic("Smrnmi detected, but platform lacks smrnmi_handlers_init callback\n");
+
+		/* Reuse _trap_handler for the RNME slot since RNME is taken
+		 * as a regular M-mode trap with NMIE=0. */
+		ops->smrnmi_handlers_init(_trap_rnmi_handler, _trap_handler);
+
+		/* Initialize MNSCRATCH for the RNMI handler */
+		csr_write(CSR_MNSCRATCH, scratch);
+
+		/* Enable NMIs */
+		csr_set(CSR_MNSTATUS, MNSTATUS_NMIE);
+	}
 
 #define __check_hpm_csr(__csr, __mask) 					  \
 	oldval = csr_read_allowed(__csr, &trap);			  \
@@ -672,14 +700,12 @@ __pmp_skip:
 	__check_csr_existence(CSR_CYCLE, SBI_HART_CSR_CYCLE);
 	__check_csr_existence(CSR_TIME, SBI_HART_CSR_TIME);
 	__check_csr_existence(CSR_INSTRET, SBI_HART_CSR_INSTRET);
+	__check_csr_existence(CSR_MENVCFG, SBI_HART_CSR_MENVCFG);
+	__check_csr_existence(CSR_SENVCFG, SBI_HART_CSR_SENVCFG);
+	/* Initialize value of emulated SENVCFG CSR */
+	scratch->sw_senvcfg = ENVCFG_CBZE | ENVCFG_CBCFE | ENVCFG_CBIE;
 
 #undef __check_csr_existence
-
-	/* Let platform populate extensions */
-	rc = sbi_platform_extensions_init(sbi_platform_thishart_ptr(),
-					  hfeatures);
-	if (rc)
-		return rc;
 
 	/* Zicntr should only be detected using traps */
 	__sbi_hart_update_extension(hfeatures, SBI_HART_EXT_ZICNTR,
@@ -741,7 +767,7 @@ int sbi_hart_init(struct sbi_scratch *scratch, bool cold_boot)
 			return SBI_ENOMEM;
 	}
 
-	rc = hart_detect_features(scratch);
+	rc = hart_detect_features(scratch, cold_boot);
 	if (rc)
 		return rc;
 

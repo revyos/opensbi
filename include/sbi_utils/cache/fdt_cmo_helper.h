@@ -23,6 +23,26 @@ int fdt_cmo_private_flc_flush_all(void);
 int fdt_cmo_llc_flush_all(void);
 
 /**
+ * Enable/Disable the private first level cache of the current hart
+ *
+ * @return 0 on success, or a negative error code on failure
+ */
+int fdt_cmo_private_flc_enable(bool enable);
+
+/**
+ * Enable/Disable the last level cache of the current hart
+ *
+ * @return 0 on success, or a negative error code on failure
+ */
+int fdt_cmo_llc_enable(bool enable);
+/**
+ * Flush the cache (all levels) of the current hart
+ *
+ * @return 0 on success, or a negative error code on failure
+ */
+int fdt_cmo_flush_all(void);
+
+/**
  * Initialize the cache devices for each hart
  *
  * @param fdt devicetree blob

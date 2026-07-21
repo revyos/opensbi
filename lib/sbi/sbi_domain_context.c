@@ -18,6 +18,8 @@
 #include <sbi/sbi_domain_context.h>
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_trap.h>
+#include <sbi/sbi_vector.h>
+#include <sbi/sbi_fp.h>
 
 /** Context representation for a hart within a domain */
 struct hart_context {
@@ -48,6 +50,11 @@ struct hart_context {
 	unsigned long senvcfg;
 	/** Supervisor resource management configuration register */
 	unsigned long srmcfg;
+
+	/** Float context state */
+	struct sbi_fp_context fp_ctx;
+	/** Vector context state */
+	struct sbi_vector_context *vec_ctx;
 
 	/** Reference to the owning domain */
 	struct sbi_domain *dom;
@@ -122,10 +129,6 @@ static int switch_to_next_domain_context(struct hart_context *ctx,
 	sbi_hartmask_set_hartindex(hartindex, &target_dom->assigned_harts);
 	spin_unlock(&target_dom->assigned_harts_lock);
 
-	/* Reconfigure PMP settings for the new domain */
-	sbi_hart_protection_unconfigure(scratch);
-	sbi_hart_protection_configure(scratch);
-
 	/* Save current CSR context and restore target domain's CSR context */
 	ctx->sstatus	= csr_swap(CSR_SSTATUS, dom_ctx->sstatus);
 	ctx->sie	= csr_swap(CSR_SIE, dom_ctx->sie);
@@ -143,10 +146,33 @@ static int switch_to_next_domain_context(struct hart_context *ctx,
 	if (sbi_hart_has_extension(scratch, SBI_HART_EXT_SSQOSID))
 		ctx->srmcfg	= csr_swap(CSR_SRMCFG, dom_ctx->srmcfg);
 
+	/* Eager context switch for float */
+	if (sbi_hart_has_extension(scratch, SBI_HART_EXT_F) ||
+	    sbi_hart_has_extension(scratch, SBI_HART_EXT_D)) {
+		sbi_fp_save(&ctx->fp_ctx);
+		sbi_fp_restore(&dom_ctx->fp_ctx);
+	}
+
+	/* Eager context switch for vector */
+	if (sbi_hart_has_extension(scratch, SBI_HART_EXT_V)) {
+		sbi_vector_save(ctx->vec_ctx);
+		sbi_vector_restore(dom_ctx->vec_ctx);
+	}
+
 	/* Save current trap state and restore target domain's trap state */
 	trap_ctx = sbi_trap_get_context(scratch);
 	sbi_memcpy(&ctx->trap_ctx, trap_ctx, sizeof(*trap_ctx));
 	sbi_memcpy(trap_ctx, &dom_ctx->trap_ctx, sizeof(*trap_ctx));
+
+	/*
+	 * Re-configure PMP settings for the new domain
+	 *
+	 * This will internally perform full SFENCE / HFENCE which
+	 * is also required for some of the above CSR updates (such
+	 * as satp CSR).
+	 */
+	sbi_hart_protection_unconfigure(scratch);
+	sbi_hart_protection_configure(scratch);
 
 	/* Mark current context structure initialized because context saved */
 	ctx->initialized = true;
@@ -168,6 +194,7 @@ static int switch_to_next_domain_context(struct hart_context *ctx,
 
 static int hart_context_init(u32 hartindex)
 {
+	size_t vec_size;
 	struct hart_context *ctx;
 	struct sbi_domain *dom;
 
@@ -179,6 +206,18 @@ static int hart_context_init(u32 hartindex)
 		ctx = sbi_zalloc(sizeof(struct hart_context));
 		if (!ctx)
 			return SBI_ENOMEM;
+
+		if (sbi_hart_has_extension(sbi_scratch_thishart_ptr(),
+					   SBI_HART_EXT_V)) {
+			vec_size = sbi_vector_context_size();
+
+			/* Allocate the vector context pointer */
+			ctx->vec_ctx = sbi_zalloc(vec_size);
+			if (!ctx->vec_ctx) {
+				sbi_free(ctx);
+				return SBI_ENOMEM;
+			}
+		}
 
 		/* Bind context and domain */
 		ctx->dom = dom;

@@ -223,11 +223,19 @@ static int pmu_ctr_validate(struct sbi_pmu_hart_state *phs,
 
 static bool pmu_ctr_idx_validate(unsigned long cbase, unsigned long cmask)
 {
-	/* Do a basic sanity check of counter base & mask */
-	return cmask && cbase + sbi_fls(cmask) < total_ctrs;
+	unsigned long last;
+
+	if (!cmask)
+		return false;
+
+	last = sbi_fls(cmask);
+	if (cbase > -1UL - last)
+		return false;
+
+	return (cbase + last) < total_ctrs;
 }
 
-int sbi_pmu_ctr_fw_read(uint32_t cidx, uint64_t *cval)
+int sbi_pmu_ctr_fw_read(unsigned long cidx, uint64_t *cval, bool high_bits)
 {
 	int event_idx_type;
 	uint32_t event_code;
@@ -235,6 +243,14 @@ int sbi_pmu_ctr_fw_read(uint32_t cidx, uint64_t *cval)
 
 	if (unlikely(!phs))
 		return SBI_EINVAL;
+
+	if (cidx < num_hw_ctrs || cidx >= total_ctrs)
+		return SBI_EINVAL;
+
+#if __riscv_xlen > 32
+	if (high_bits)
+		return 0;
+#endif
 
 	event_idx_type = pmu_ctr_validate(phs, cidx, &event_code);
 	if (event_idx_type != SBI_PMU_EVENT_TYPE_FW)
@@ -448,6 +464,8 @@ static int pmu_ctr_start_fw(struct sbi_pmu_hart_state *phs,
 			    uint64_t event_data, uint64_t ival,
 			    bool ival_update)
 {
+	int ret;
+
 	if ((event_code >= SBI_PMU_FW_MAX &&
 	    event_code <= SBI_PMU_FW_RESERVED_MAX) ||
 	    event_code > SBI_PMU_FW_PLATFORM)
@@ -468,9 +486,11 @@ static int pmu_ctr_start_fw(struct sbi_pmu_hart_state *phs,
 							cidx - num_hw_ctrs,
 							ival);
 
-		return pmu_dev->fw_counter_start(phs->hartid,
+		ret = pmu_dev->fw_counter_start(phs->hartid,
 						 cidx - num_hw_ctrs,
 						 event_data);
+		if (ret)
+			return ret;
 	} else {
 		if (ival_update)
 			phs->fw_counters_data[cidx - num_hw_ctrs] = ival;
@@ -818,13 +838,20 @@ static int pmu_ctr_find_hw(struct sbi_pmu_hart_state *phs,
 
 	if (ctr_idx == SBI_ENOTSUPP) {
 		/**
-		 * We can't find any programmable counters for cycle/instret.
-		 * Return the fixed counter as they are mandatory anyways.
+		 * We can't find a programmable counter, see if we can use a
+		 * fixed counter instead if one was found for this event.
+		 *
+		 * If sscofpmf is present but smcntrpmf is not, we can't
+		 * fallback to a fixed counter, because the fixed counter
+		 * doesn't support filtering whereas a programmable counter
+		 * would.
 		 */
-		if (fixed_ctr >= 0)
-			return pmu_fixed_ctr_update_inhibit_bits(fixed_ctr, flags);
-		else
+		if (fixed_ctr < 0 ||
+		    ((sbi_hart_has_extension(scratch, SBI_HART_EXT_SSCOFPMF) &&
+		      !sbi_hart_has_extension(scratch, SBI_HART_EXT_SMCNTRPMF))))
 			return SBI_EFAIL;
+
+		return pmu_fixed_ctr_update_inhibit_bits(fixed_ctr, flags);
 	}
 	ret = pmu_update_hw_mhpmevent(temp, ctr_idx, flags, event_idx, data);
 
@@ -896,6 +923,9 @@ int sbi_pmu_ctr_cfg_match(unsigned long cidx_base, unsigned long cidx_mask,
 		 */
 		unsigned long cidx_first = cidx_base + sbi_ffs(cidx_mask);
 
+		if (cidx_first >= total_ctrs)
+			return SBI_EINVAL;
+
 		if (phs->active_events[cidx_first] == SBI_PMU_EVENT_IDX_INVALID)
 			return SBI_EINVAL;
 		ctr_idx = cidx_first;
@@ -927,7 +957,10 @@ int sbi_pmu_ctr_cfg_match(unsigned long cidx_base, unsigned long cidx_mask,
 
 	phs->active_events[ctr_idx] = event_idx;
 skip_match:
-	if (event_type == SBI_PMU_EVENT_TYPE_HW) {
+	if (event_type == SBI_PMU_EVENT_TYPE_HW ||
+	    event_type == SBI_PMU_EVENT_TYPE_HW_CACHE ||
+	    event_type == SBI_PMU_EVENT_TYPE_HW_RAW ||
+	    event_type == SBI_PMU_EVENT_TYPE_HW_RAW_V2) {
 		if (flags & SBI_PMU_CFG_FLAG_CLEAR_VALUE)
 			pmu_ctr_write_hw(ctr_idx, 0);
 		if (flags & SBI_PMU_CFG_FLAG_AUTO_START)

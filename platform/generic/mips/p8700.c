@@ -5,8 +5,6 @@
  *
  */
 
-#include <platform_override.h>
-#include <sbi/riscv_barrier.h>
 #include <sbi/riscv_io.h>
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_error.h>
@@ -16,11 +14,74 @@
 #include <mips/p8700.h>
 #include <mips/mips-cm.h>
 
-extern void mips_warm_boot(void);
+const struct p8700_cm_info *p8700_cm_info;
 
-static void mips_p8700_pmp_set(unsigned int n, unsigned long flags,
-			       unsigned long prot, unsigned long addr,
-			       unsigned long log2len)
+void mips_p8700_dump_mmio(void)
+{
+	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
+	unsigned hartid = current_hartid();
+	unsigned cl = cpu_cluster(hartid);
+	unsigned long cm_base = p8700_cm_info->gcr_base[cl];
+	u64 gcr_config = readq((void*)cm_base + GCR_GLOBAL_CONFIG);
+	int num_mmios = EXTRACT_FIELD(gcr_config, GCR_GC_NUM_MMIOS);
+	static const char *ports[16] = {
+		[0] = "MEM",
+		[1] = "? 1",
+		[2] = "? 2",
+		[3] = "? 3",
+		[4] = "? 4",
+		[5] = "? 5",
+		[6] = "? 6",
+		[7] = "? 7",
+		[8]  = "AUX0",
+		[9]  = "AUX1",
+		[10] = "AUX2",
+		[11] = "AUX3",
+		[12] = "? 12",
+		[13] = "? 13",
+		[14] = "? 14",
+		[15] = "? 15",
+	};
+	static const char *ccas[4] = {
+		[0] = "ANY",
+		[1] = "UC",
+		[2] = "UCA",
+		[3] = "UC|UCA",
+	};
+	static const char *ncs[2] = {
+		[0] = "  ",
+		[1] = "NC",
+	};
+	static const char *dis_rqs[2] = {
+		[0] = "          ",
+		[1] = "DIS_RQ_LIM",
+	};
+	if (!(scratch->options & SBI_SCRATCH_DEBUG_PRINTS))
+		return;
+
+	sbi_printf("Cluster %d: %d MMIO regions\n", cl, num_mmios);
+	for (int i = 0; i < num_mmios; i++) {
+		u64 b = readq((void*)cm_base + GCR_MMIO_BOTTOM(i));
+		u64 t = readq((void*)cm_base + GCR_MMIO_TOP(i));
+		if (b & GCR_MMIO_BOTTOM_EN) {
+			ulong ta = EXTRACT_FIELD(t, GCR_MMIO_ADDR) << 16;
+			ulong ba = EXTRACT_FIELD(b, GCR_MMIO_ADDR) << 16;
+			int cca = EXTRACT_FIELD(b, GCR_MMIO_BOTTOM_CCA);
+			int nc = EXTRACT_FIELD(b, GCR_MMIO_BOTTOM_FORCE_NC);
+			int port = EXTRACT_FIELD(b, GCR_MMIO_BOTTOM_PORT);
+			int dis_rq_lim = EXTRACT_FIELD(b, GCR_MMIO_BOTTOM_DIS_RQ_LIM);
+
+			sbi_printf("  [%d] : 0x%016lx-0x%016lx %4s %6s %s %s\n", i,
+				   ba, ta, ports[port], ccas[cca], ncs[nc], dis_rqs[dis_rq_lim]);
+		} else {
+			sbi_printf("  [%d] : --disabled--\n", i);
+		}
+	}
+}
+
+void mips_p8700_pmp_set(unsigned int n, unsigned long flags,
+			unsigned long prot, unsigned long addr,
+			unsigned long log2len)
 {
 	int pmacfg_csr, pmacfg_shift;
 	unsigned long cfgmask;
@@ -38,137 +99,187 @@ static void mips_p8700_pmp_set(unsigned int n, unsigned long flags,
 	csr_write_num(pmacfg_csr, pmacfg);
 }
 
-#if CLUSTERS_IN_PLATFORM > 1
-static void power_up_other_cluster(u32 hartid)
+static void mips_p8700_sync_hrtimer(unsigned int cl)
 {
-	unsigned int stat;
-	unsigned int timeout;
-	bool local_p = (cpu_cluster(current_hartid()) == cpu_cluster(hartid));
+	u64 v1, v2, mv, delta;
+	volatile u64 *my_timer = (volatile u64 *)(p8700_cm_info->gcr_base[cl] + CPC_OFFSET + CPC_HRTIME);
+	volatile u64 *ref_timer = (volatile u64 *)(p8700_cm_info->gcr_base[0] + CPC_OFFSET + CPC_HRTIME);
 
-	/* Power up cluster cl core 0 hart 0 */
-	write_cpc_pwrup_ctl(hartid, 1, local_p);
+	v1 = readq_relaxed(my_timer);
+	mv = readq_relaxed(ref_timer);
+	v2 = readq_relaxed(my_timer);
+	delta = mv - ((v1 / 2) + (v2 / 2));
+	writeq_relaxed(readq_relaxed(my_timer) + delta, my_timer);
+}
+
+void mips_p8700_power_up_other_cluster(u32 hartid)
+{
+	unsigned int cl = cpu_cluster(hartid);
+
+	/* Power up CM in cluster */
+	write_cpc_pwrup_ctl(hartid, 1);
 
 	/* Wait for the CM to start up */
-	timeout = 100;
-	while (true) {
-		stat = read_cpc_cm_stat_conf(hartid, local_p);
-		stat = EXT(stat, CPC_Cx_STAT_CONF_SEQ_STATE);
-		if (stat == CPC_Cx_STAT_CONF_SEQ_STATE_U5)
-			break;
+	for (int i = 100; i > 0; i--) {
+		u32 stat = read_cpc_cm_stat_conf(hartid);
 
-		/* Delay a little while before we start warning */
-		if (timeout) {
-			sbi_dprintf("Delay a little while before we start warning\n");
-			timeout--;
+		stat = EXTRACT_FIELD(stat, CPC_Cx_STAT_CONF_SEQ_STATE);
+		if (stat == CPC_Cx_STAT_CONF_SEQ_STATE_U5) {
+			if (cl) /* sync high-res timer to cluster 0 */
+				mips_p8700_sync_hrtimer(cl);
+			return;
 		}
-		else {
-			sbi_printf("Waiting for cluster %u CM to power up... STAT_CONF=0x%x\n",
-				   cpu_cluster(hartid), stat);
-			break;
-		}
+		cpu_relax();
 	}
+	sbi_printf("ERROR: Fail to power up cluster %u\n", cl);
 }
-#endif
 
-static int mips_hart_start(u32 hartid, ulong saddr)
+extern void mips_warm_boot(void);
+
+struct mips_boot_params {
+	u32 hartid;
+	u32 target_state;
+};
+
+static bool mips_hart_reached_state(void *arg)
 {
-	unsigned int stat;
-	unsigned int timeout;
-	bool local_p = (cpu_cluster(current_hartid()) == cpu_cluster(hartid));
+	struct mips_boot_params *p = arg;
+	u32 stat = read_cpc_co_stat_conf(p->hartid);
 
+	stat = EXTRACT_FIELD(stat, CPC_Cx_STAT_CONF_SEQ_STATE);
+	return stat == p->target_state;
+}
+
+int mips_p8700_hart_start(u32 hartid, ulong saddr)
+{
 	/* Hart 0 is the boot hart, and we don't use the CPC cmd to start.  */
 	if (hartid == 0)
 		return SBI_ENOTSUPP;
 
 	/* Change reset base to mips_warm_boot */
-	write_gcr_co_reset_base(hartid, (unsigned long)mips_warm_boot, local_p);
+	write_gcr_co_reset_base(hartid, (unsigned long)mips_warm_boot);
 
 	if (cpu_hart(hartid) == 0) {
+		unsigned int const timeout_ms = 10;
+		bool booted;
+		struct mips_boot_params p = {
+			.hartid = hartid,
+			.target_state = CPC_Cx_STAT_CONF_SEQ_STATE_U6,
+		};
+
 		/* Ensure its coherency is disabled */
-		write_gcr_co_coherence(hartid, 0, local_p);
+		write_gcr_co_coherence(hartid, 0);
 
 		/* Start cluster cl core co hart 0 */
-		write_cpc_co_vp_run(hartid, 1 << cpu_hart(hartid), local_p);
+		write_cpc_co_vp_run(hartid, 1 << cpu_hart(hartid));
 
 		/* Reset cluster cl core co hart 0 */
-		write_cpc_co_cmd(hartid, CPC_Cx_CMD_RESET, local_p);
+		write_cpc_co_cmd(hartid, CPC_Cx_CMD_RESET);
 
-		timeout = 100;
-		while (true) {
-			stat = read_cpc_co_stat_conf(hartid, local_p);
-			stat = EXT(stat, CPC_Cx_STAT_CONF_SEQ_STATE);
-			if (stat == CPC_Cx_STAT_CONF_SEQ_STATE_U6)
-				break;
-
-			/* Delay a little while before we start warning */
-			if (timeout) {
-				sbi_timer_mdelay(10);
-				timeout--;
-			}
-			else {
-				sbi_printf("Waiting for cluster %u core %u hart %u to start... STAT_CONF=0x%x\n",
-					   cpu_cluster(hartid),
-					   cpu_core(hartid), cpu_hart(hartid),
-					   stat);
-				break;
-			}
+		booted = sbi_timer_waitms_until(mips_hart_reached_state, &p, timeout_ms);
+		if (!booted) {
+			sbi_printf("ERROR: failed to boot hart 0x%x in %d ms\n",
+				   hartid, timeout_ms);
+			return -SBI_ETIMEDOUT;
 		}
-	}
-	else {
-		write_cpc_co_vp_run(hartid, 1 << cpu_hart(hartid), local_p);
+	} else {
+		write_cpc_co_vp_run(hartid, 1 << cpu_hart(hartid));
 	}
 
 	return 0;
 }
 
-static int mips_hart_stop()
+int mips_p8700_hart_stop()
 {
 	u32 hartid = current_hartid();
-	bool local_p = (cpu_cluster(current_hartid()) == cpu_cluster(hartid));
 
 	/* Hart 0 is the boot hart, and we don't use the CPC cmd to stop.  */
 	if (hartid == 0)
 		return SBI_ENOTSUPP;
 
-	write_cpc_co_vp_stop(hartid, 1 << cpu_hart(hartid), local_p);
+	write_cpc_co_vp_stop(hartid, 1 << cpu_hart(hartid));
 
 	return 0;
 }
 
-static const struct sbi_hsm_device mips_hsm = {
-	.name		= "mips_hsm",
-	.hart_start	= mips_hart_start,
-	.hart_stop	= mips_hart_stop,
-};
-
-static int mips_p8700_final_init(bool cold_boot)
+void mips_p8700_cache_info(struct p8700_cache_info *l1d, struct p8700_cache_info *l1i,
+			   struct p8700_cache_info *l2)
 {
-	if (cold_boot)
-		sbi_hsm_set_device(&mips_hsm);
+	u32 mipsconfig1 = csr_read(CSR_MIPSCONFIG1);
 
-	return generic_final_init(cold_boot);
+	if (l1d) {
+		u32 da = EXTRACT_FIELD(mipsconfig1, MIPSCONFIG1_DA);
+		u32 dl = EXTRACT_FIELD(mipsconfig1, MIPSCONFIG1_DL);
+		u32 ds = EXTRACT_FIELD(mipsconfig1, MIPSCONFIG1_DS);
+
+		l1d->line = dl ? 1 << (dl + 1) : 0;
+		l1d->assoc_ways = da +1;
+		l1d->sets = ds == 7 ? 32 : 1 << (ds + 6);
+	}
+	if (l1i) {
+		u32 ia = EXTRACT_FIELD(mipsconfig1, MIPSCONFIG1_IA);
+		u32 il = EXTRACT_FIELD(mipsconfig1, MIPSCONFIG1_IL);
+		u32 is = EXTRACT_FIELD(mipsconfig1, MIPSCONFIG1_IS);
+
+		l1i->line = il ? 1 << (il + 1) : 0;
+		l1i->assoc_ways = ia +1;
+		l1i->sets = is == 7 ? 32 : 1 << (is + 6);
+	}
+	if (l2) {
+		if (mipsconfig1 & MIPSCONFIG1_L2C) {
+			void *cm_base = (void *)p8700_cm_info->gcr_base[0];
+			u32 l2_config = readl(cm_base + GCR_L2_CONFIG);
+
+			if (l2_config & GCR_L2_REG_EXISTS) {
+				u32 l2a = EXTRACT_FIELD(l2_config, GCR_L2_ASSOC);
+				u32 l2l = EXTRACT_FIELD(l2_config, GCR_L2_LINE_SIZE);
+				u32 l2s = EXTRACT_FIELD(l2_config, GCR_L2_SET_SIZE);
+
+				l2->assoc_ways = l2a + 1;
+				l2->line = 1 << (l2l + 1);
+				l2->sets = 1 << (l2s + 6);
+				return;
+			}
+		}
+		l2->line = 0;
+		l2->assoc_ways = 0;
+		l2->sets = 0;
+	}
 }
 
-static int mips_p8700_early_init(bool cold_boot)
+/**
+ * See CPU cluster memory map in the table below
+ * To save PMP regions, group areas with M mode access, marked (1) and (2)
+ *
+ * GCR_BASE offset   |   |   | Block Name   | Description
+ * 0x00000 - 0x01FFF | M | ^ | GCR.Global   | Per-cluster CM registers.
+ * 0x02000 - 0x05FFF | M | | | GCR.Core     | Per-core CM registers.
+ * 0x06000 - 0x07FFF | - |(1)| Reserved.
+ * 0x08000 - 0x09FFF | M | | | CPC.Global   | Per-cluster CPC registers.
+ * 0x0A000 - 0x0EFFF | M | | | CPC.Core     | Per-core/Per-device CPC registers.
+ * 0x0F000 - 0x0FFFF | - | v | Reserved.
+ * 0x10000 - 0x1FFFF | S |   | uGCR         | Reserved for user defined CM registers.
+ * 0x20000 - 0x3EFFF | - |   | Reserved.
+ * 0x3F000 - 0x3F0FF | ? |   | FDC.Global   | FDC.Global registers.
+ * 0x3F100 - 0x3FFFF | ? |   | TRF.Global   | TRF.Global registers
+ * 0x40000 - 0x4BFFF | M | ^ | APLIC.M      | APLIC Machine registers.
+ * 0x4C000 - 0x4CFFF | M |(2)| APLIC.custom | APLIC custom registers.
+ * 0x4D000 - 0x4FFFF | - | | | Reserved.
+ * 0x50000 - 0x5FFFF | M | v | ACLINT.M     | ACLINT Machine registers.
+ * 0x60000 - 0x6BFFF | S |   | APLIC.S      | APLIC Supervisor registers.
+ * 0x6C000 - 0x6FFFF | S |   | ACLINT.S     | ACLINT Supervisor registers.
+ * 0x70000 - 0x7EFFF | - |   | Reserved.
+ * 0x7F000 - 0x7FFFF | S |   | GCR.U        | User Mode GCRs.
+ */
+int mips_p8700_add_memranges(void)
 {
-	int rc;
+	int rc = SBI_OK;
+	for (int i = 0; i < p8700_cm_info->num_cm; i++) {
+		unsigned long cm_base = p8700_cm_info->gcr_base[i];
 
-	rc = generic_early_init(cold_boot);
-	if (rc)
-		return rc;
-
-	if (cold_boot) {
-#if CLUSTERS_IN_PLATFORM > 1
-		int i;
-		/* Power up other clusters in the platform. */
-		for (i = 1; i < CLUSTERS_IN_PLATFORM; i++) {
-			power_up_other_cluster(i << NEW_CLUSTER_SHIFT);
-		}
-#endif
-
-		/* For the CPC mtime region, the minimum size is 0x10000. */
-		rc = sbi_domain_root_add_memrange(CM_BASE, SIZE_FOR_CPC_MTIME,
-						  P8700_ALIGN,
+		/* CM and MTIMER */
+		rc = sbi_domain_root_add_memrange(cm_base, SIZE_FOR_CPC_MTIME,
+						  SIZE_FOR_CPC_MTIME,
 						  (SBI_DOMAIN_MEMREGION_MMIO |
 						   SBI_DOMAIN_MEMREGION_M_READABLE |
 						   SBI_DOMAIN_MEMREGION_M_WRITABLE));
@@ -176,121 +287,26 @@ static int mips_p8700_early_init(bool cold_boot)
 			return rc;
 
 		/* For the APLIC and ACLINT m-mode region */
-		rc = sbi_domain_root_add_memrange(AIA_BASE, SIZE_FOR_AIA_M_MODE,
-						  P8700_ALIGN,
+		rc = sbi_domain_root_add_memrange(cm_base + AIA_OFFSET, SIZE_FOR_AIA_M_MODE,
+						  SIZE_FOR_AIA_M_MODE,
 						  (SBI_DOMAIN_MEMREGION_MMIO |
 						   SBI_DOMAIN_MEMREGION_M_READABLE |
 						   SBI_DOMAIN_MEMREGION_M_WRITABLE));
 		if (rc)
 			return rc;
-
-#if CLUSTERS_IN_PLATFORM > 1
-		for (i = 0; i < CLUSTERS_IN_PLATFORM; i++) {
-			/* For the CPC mtime region, the minimum size is 0x10000. */
-			rc = sbi_domain_root_add_memrange(GLOBAL_CM_BASE[i], SIZE_FOR_CPC_MTIME,
-							  P8700_ALIGN,
-							  (SBI_DOMAIN_MEMREGION_MMIO |
-							   SBI_DOMAIN_MEMREGION_M_READABLE |
-							   SBI_DOMAIN_MEMREGION_M_WRITABLE));
-			if (rc)
-				return rc;
-
-			/* For the APLIC and ACLINT m-mode region */
-			rc = sbi_domain_root_add_memrange(AIA_BASE - CM_BASE + GLOBAL_CM_BASE[i], SIZE_FOR_AIA_M_MODE,
-							  P8700_ALIGN,
-							  (SBI_DOMAIN_MEMREGION_MMIO |
-							   SBI_DOMAIN_MEMREGION_M_READABLE |
-							   SBI_DOMAIN_MEMREGION_M_WRITABLE));
-			if (rc)
-				return rc;
-		}
-#endif
 	}
-
-	return 0;
+	return rc;
 }
 
-static int mips_p8700_nascent_init(void)
+int mips_p8700_platform_init(const void *fdt, int nodeoff, const struct fdt_match *match)
 {
-	u64 hartid = current_hartid();
-	u64 cm_base = CM_BASE;
-	int i;
+	const struct p8700_cm_info *data = match->data;
 
-	/* Coherence enable for every core */
-	if (cpu_hart(hartid) == 0) {
-		cm_base += (cpu_core(hartid) << CM_BASE_CORE_SHIFT);
-		__raw_writeq(GCR_CORE_COH_EN_EN,
-			     (void *)(cm_base + GCR_OFF_LOCAL +
-				      GCR_CORE_COH_EN));
-		mb();
+	if (!data) {
+		sbi_printf("Missing CM info for %s\n", match->compatible);
+		return SBI_EINVAL;
 	}
 
-	/* Set up pmp for DRAM */
-	csr_write(CSR_PMPADDR14, DRAM_PMP_ADDR);
-	/* All from 0x0 */
-	csr_write(CSR_PMPADDR15, 0x1fffffffffffffff);
-	csr_write(CSR_PMPCFG2, ((PMP_A_NAPOT|PMP_R|PMP_W|PMP_X)<<56)|
-		  ((PMP_A_NAPOT|PMP_R|PMP_W|PMP_X)<<48));
-	/* Set cacheable for pmp6, uncacheable for pmp7 */
-	csr_write(CSR_MIPSPMACFG2, ((u64)CCA_CACHE_DISABLE << 56)|
-		  ((u64)CCA_CACHE_ENABLE << 48));
-	/* Reset pmpcfg0 */
-	csr_write(CSR_PMPCFG0, 0);
-	/* Reset pmacfg0 */
-	csr_write(CSR_MIPSPMACFG0, 0);
-	mb();
-
-	/* Per cluster set up */
-	if (cpu_core(hartid) == 0 && cpu_hart(hartid) == 0) {
-		/* Enable L2 prefetch */
-		__raw_writel(0xfffff110,
-			     (void *)(cm_base + L2_PFT_CONTROL_OFFSET));
-		__raw_writel(0x15ff,
-			     (void *)(cm_base + L2_PFT_CONTROL_B_OFFSET));
-	}
-
-	/* Per core set up */
-	if (cpu_hart(hartid) == 0) {
-		/* Enable load pair, store pair, and HTW */
-		csr_clear(CSR_MIPSCONFIG7, (1<<12)|(1<<13)|(1<<7));
-
-		/* Disable noRFO, misaligned load/store */
-		csr_set(CSR_MIPSCONFIG7, (1<<25)|(1<<9));
-
-		/* Enable L1-D$ Prefetch */
-		csr_write(CSR_MIPSCONFIG11, 0xff);
-
-		for (i = 0; i < 8; i++) {
-			csr_set(CSR_MIPSCONFIG8, 4 + 0x100 * i);
-			csr_set(CSR_MIPSCONFIG9, 8);
-			mb();
-			RISCV_FENCE_I;
-		}
-	}
-
-	/* Per hart set up */
-	/* Enable AMO and RDTIME illegal instruction exceptions. */
-	csr_set(CSR_MIPSCONFIG6, (1<<2)|(1<<1));
-
-	return 0;
+	p8700_cm_info = data;
+	return SBI_OK;
 }
-
-static int mips_p8700_platform_init(const void *fdt, int nodeoff, const struct fdt_match *match)
-{
-	generic_platform_ops.early_init = mips_p8700_early_init;
-	generic_platform_ops.final_init = mips_p8700_final_init;
-	generic_platform_ops.nascent_init = mips_p8700_nascent_init;
-	generic_platform_ops.pmp_set = mips_p8700_pmp_set;
-
-	return 0;
-}
-
-static const struct fdt_match mips_p8700_match[] = {
-	{ .compatible = "mips,p8700" },
-	{ },
-};
-
-const struct fdt_driver mips_p8700 = {
-	.match_table = mips_p8700_match,
-	.init = mips_p8700_platform_init,
-};

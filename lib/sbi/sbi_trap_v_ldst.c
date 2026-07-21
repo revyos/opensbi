@@ -11,15 +11,16 @@
 
 #include <sbi/riscv_asm.h>
 #include <sbi/riscv_encoding.h>
+#include <sbi/sbi_bitops.h>
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_trap_ldst.h>
 #include <sbi/sbi_trap.h>
 #include <sbi/sbi_unpriv.h>
-#include <sbi/sbi_trap.h>
+#include <sbi/sbi_vector.h>
 
 #ifdef OPENSBI_CC_SUPPORT_VECTOR
 
-#define VLEN_MAX 65536
+#define MASK_BUFFLEN 1024
 
 static inline void set_vreg(ulong vlenb, ulong which,
 			    ulong pos, ulong size, const uint8_t *bytes)
@@ -137,17 +138,37 @@ static inline void vsetvl(ulong vl, ulong vtype)
 			:: "r" (vl), "r" (vtype));
 }
 
-int sbi_misaligned_v_ld_emulator(int rlen, union sbi_ldst_data *out_val,
-				 struct sbi_trap_context *tcntx)
+/**
+ * Handling of misaligned fault is done by a collection of smaller, but
+ * aligned load/store(s). Another fault (load/store, page fault...) can
+ * arise from any of them, then the handling gets aborted. We must fixup
+ * the tinst to pretend the fault was rised from the original insn. For
+ * vector insn, simply null out tinst if it's not a guest-page fault, as
+ * there's no transformed insn for vector load/store
+ */
+static inline void sbi_misaligned_v_tinst_fixup(struct sbi_trap_info *uptrap)
 {
-	const struct sbi_trap_info *orig_trap = &tcntx->trap;
+	/*
+	 * The function is called in code path for handling a vector
+	 * load/store misaligned fault, thus the new uptrap can't have
+	 * custom value of tinst
+	 */
+	if (uptrap->tinst == INSN_PSEUDO_VS_LOAD ||
+	    uptrap->tinst == INSN_PSEUDO_VS_STORE)
+		/* Use uptrap as-is for guest-page faults */
+		return;
+
+	uptrap->tinst = 0;
+}
+
+int sbi_misaligned_v_ld_emulator(ulong insn, struct sbi_trap_context *tcntx)
+{
 	struct sbi_trap_regs *regs = &tcntx->regs;
 	struct sbi_trap_info uptrap;
-	ulong insn = sbi_get_insn(regs->mepc, &uptrap);
 	ulong vl = csr_read(CSR_VL);
 	ulong vtype = csr_read(CSR_VTYPE);
 	ulong vlenb = csr_read(CSR_VLENB);
-	ulong vstart = csr_read(CSR_VSTART);
+	ulong vstart = csr_read(CSR_VSTART), orig_vstart = vstart;
 	ulong base = GET_RS1(insn, regs);
 	ulong stride = GET_RS2(insn, regs);
 	ulong vd = GET_VD(insn);
@@ -157,8 +178,9 @@ int sbi_misaligned_v_ld_emulator(int rlen, union sbi_ldst_data *out_val,
 	ulong vlmul = GET_VLMUL(vtype);
 	bool illegal = GET_MEW(insn);
 	bool masked = IS_MASKED(insn);
-	uint8_t mask[VLEN_MAX / 8];
+	uint8_t mask[MASK_BUFFLEN / 8];
 	uint8_t bytes[8 * sizeof(uint64_t)];
+	ulong mask_len = MASK_BUFFLEN < vlenb * 8 ? MASK_BUFFLEN : vlenb * 8;
 	ulong len = GET_LEN(view);
 	ulong nf = GET_NF(insn);
 	ulong vemul = GET_VEMUL(vlmul, view, vsew);
@@ -179,7 +201,7 @@ int sbi_misaligned_v_ld_emulator(int rlen, union sbi_ldst_data *out_val,
 		stride = nf * len;
 	}
 
-	if (illegal || vlenb > VLEN_MAX / 8) {
+	if (illegal) {
 		struct sbi_trap_info trap = {
 			uptrap.cause = CAUSE_ILLEGAL_INSTRUCTION,
 			uptrap.tval = insn,
@@ -187,67 +209,79 @@ int sbi_misaligned_v_ld_emulator(int rlen, union sbi_ldst_data *out_val,
 		return sbi_trap_redirect(regs, &trap);
 	}
 
-	if (masked)
-		get_vreg(vlenb, 0, 0, vlenb, mask);
-
 	do {
-		if (!masked || ((mask[vstart / 8] >> (vstart % 8)) & 1)) {
-			/* compute element address */
-			ulong addr = base + vstart * stride;
+		if (masked) {
+			if (vstart == orig_vstart || vstart % mask_len == 0)
+				/* Fetch a mask_len chunk of mask */
+				get_vreg(vlenb, 0, vstart / mask_len * mask_len,
+					 mask_len, mask);
 
-			if (IS_INDEXED_LOAD(insn)) {
-				ulong offset = 0;
-
-				get_vreg(vlenb, vs2, vstart << view, 1 << view, (uint8_t *)&offset);
-				addr = base + offset;
-			}
-
-			csr_write(CSR_VSTART, vstart);
-
-			/* obtain load data from memory */
-			for (ulong seg = 0; seg < nf; seg++) {
-				for (ulong i = 0; i < len; i++) {
-					bytes[seg * len + i] =
-						sbi_load_u8((void *)(addr + seg * len + i),
-							    &uptrap);
-
-					if (uptrap.cause) {
-						if (IS_FAULT_ONLY_FIRST_LOAD(insn) && vstart != 0) {
-							vl = vstart;
-							break;
-						}
-						vsetvl(vl, vtype);
-						uptrap.tinst = sbi_misaligned_tinst_fixup(
-							orig_trap->tinst, uptrap.tinst, i);
-						return sbi_trap_redirect(regs, &uptrap);
-					}
-				}
-			}
-
-			/* write load data to regfile */
-			for (ulong seg = 0; seg < nf; seg++)
-				set_vreg(vlenb, vd + seg * emul, vstart * len,
-					 len, &bytes[seg * len]);
+			if (~mask[vstart % mask_len / 8] & BIT(vstart % 8))
+				continue;
 		}
+
+		/* compute element address */
+		ulong addr = base + vstart * stride;
+
+		if (IS_INDEXED_LOAD(insn)) {
+			ulong offset = 0;
+
+			get_vreg(vlenb, vs2, vstart << view, 1 << view, (uint8_t *)&offset);
+			addr = base + offset;
+		}
+
+		csr_write(CSR_VSTART, vstart);
+
+		/* obtain load data from memory */
+		for (ulong seg = 0; seg < nf; seg++) {
+			sbi_load_loop(bytes + seg * len,
+				       addr + seg * len, len, &uptrap);
+
+			if (!uptrap.cause)
+				continue;
+
+			if (IS_FAULT_ONLY_FIRST_LOAD(insn) && vstart != 0) {
+				vl = vstart;
+				goto done;
+			}
+
+			vsetvl(vl, vtype);
+			csr_write(CSR_VSTART, vstart);
+			/* Don't forget to set dirty if vstart has changed */
+			if (vstart != orig_vstart)
+				SET_VS_DIRTY(regs);
+			sbi_misaligned_v_tinst_fixup(&uptrap);
+			return sbi_trap_redirect(regs, &uptrap);
+		}
+
+		/* write load data to regfile */
+		for (ulong seg = 0; seg < nf; seg++)
+			set_vreg(vlenb, vd + seg * emul, vstart * len,
+				 len, &bytes[seg * len]);
 	} while (++vstart < vl);
 
+done:
 	/* restore clobbered vl/vtype */
-	vsetvl(vl, vtype);
+	vsetvl(vl, vtype); // VSTART resets to 0
 
-	return vl;
+	/*
+	 * At least 1 element is processed, or vl is changed above in
+	 * the FAULT_ONLY_FIRST_LOAD path, thus set dirty.
+	 */
+	SET_VS_DIRTY(regs);
+
+	/* Return a >0 value for the caller to advance mepc */
+	return 1;
 }
 
-int sbi_misaligned_v_st_emulator(int wlen, union sbi_ldst_data in_val,
-				 struct sbi_trap_context *tcntx)
+int sbi_misaligned_v_st_emulator(ulong insn, struct sbi_trap_context *tcntx)
 {
-	const struct sbi_trap_info *orig_trap = &tcntx->trap;
 	struct sbi_trap_regs *regs = &tcntx->regs;
 	struct sbi_trap_info uptrap;
-	ulong insn = sbi_get_insn(regs->mepc, &uptrap);
 	ulong vl = csr_read(CSR_VL);
 	ulong vtype = csr_read(CSR_VTYPE);
 	ulong vlenb = csr_read(CSR_VLENB);
-	ulong vstart = csr_read(CSR_VSTART);
+	ulong vstart = csr_read(CSR_VSTART), orig_vstart = vstart;
 	ulong base = GET_RS1(insn, regs);
 	ulong stride = GET_RS2(insn, regs);
 	ulong vd = GET_VD(insn);
@@ -257,8 +291,9 @@ int sbi_misaligned_v_st_emulator(int wlen, union sbi_ldst_data in_val,
 	ulong vlmul = GET_VLMUL(vtype);
 	bool illegal = GET_MEW(insn);
 	bool masked = IS_MASKED(insn);
-	uint8_t mask[VLEN_MAX / 8];
+	uint8_t mask[MASK_BUFFLEN / 8];
 	uint8_t bytes[8 * sizeof(uint64_t)];
+	ulong mask_len = MASK_BUFFLEN < vlenb * 8 ? MASK_BUFFLEN : vlenb * 8;
 	ulong len = GET_LEN(view);
 	ulong nf = GET_NF(insn);
 	ulong vemul = GET_VEMUL(vlmul, view, vsew);
@@ -279,7 +314,7 @@ int sbi_misaligned_v_st_emulator(int wlen, union sbi_ldst_data in_val,
 		stride = nf * len;
 	}
 
-	if (illegal || vlenb > VLEN_MAX / 8) {
+	if (illegal) {
 		struct sbi_trap_info trap = {
 			uptrap.cause = CAUSE_ILLEGAL_INSTRUCTION,
 			uptrap.tval = insn,
@@ -287,58 +322,73 @@ int sbi_misaligned_v_st_emulator(int wlen, union sbi_ldst_data in_val,
 		return sbi_trap_redirect(regs, &trap);
 	}
 
-	if (masked)
-		get_vreg(vlenb, 0, 0, vlenb, mask);
-
 	do {
-		if (!masked || ((mask[vstart / 8] >> (vstart % 8)) & 1)) {
-			/* compute element address */
-			ulong addr = base + vstart * stride;
+		if (masked) {
+			if (vstart == orig_vstart || vstart % mask_len == 0)
+				/* Fetch a mask_len chunk of mask */
+				get_vreg(vlenb, 0, vstart / mask_len * mask_len,
+					 mask_len, mask);
 
-			if (IS_INDEXED_STORE(insn)) {
-				ulong offset = 0;
+			if (~mask[vstart % mask_len / 8] & BIT(vstart % 8))
+				continue;
+		}
 
-				get_vreg(vlenb, vs2, vstart << view, 1 << view, (uint8_t *)&offset);
-				addr = base + offset;
-			}
+		/* compute element address */
+		ulong addr = base + vstart * stride;
 
-			/* obtain store data from regfile */
-			for (ulong seg = 0; seg < nf; seg++)
-				get_vreg(vlenb, vd + seg * emul, vstart * len,
-					 len, &bytes[seg * len]);
+		if (IS_INDEXED_STORE(insn)) {
+			ulong offset = 0;
 
+			get_vreg(vlenb, vs2, vstart << view, 1 << view, (uint8_t *)&offset);
+			addr = base + offset;
+		}
+
+		/* obtain store data from regfile */
+		for (ulong seg = 0; seg < nf; seg++)
+			get_vreg(vlenb, vd + seg * emul, vstart * len,
+				 len, &bytes[seg * len]);
+
+		/* write store data to memory */
+		for (ulong seg = 0; seg < nf; seg++) {
+			sbi_store_loop(bytes + seg * len,
+					addr + seg * len, len, &uptrap);
+
+			if (!uptrap.cause)
+				continue;
+
+			vsetvl(vl, vtype);
 			csr_write(CSR_VSTART, vstart);
-
-			/* write store data to memory */
-			for (ulong seg = 0; seg < nf; seg++) {
-				for (ulong i = 0; i < len; i++) {
-					sbi_store_u8((void *)(addr + seg * len + i),
-						     bytes[seg * len + i], &uptrap);
-					if (uptrap.cause) {
-						vsetvl(vl, vtype);
-						uptrap.tinst = sbi_misaligned_tinst_fixup(
-							orig_trap->tinst, uptrap.tinst, i);
-						return sbi_trap_redirect(regs, &uptrap);
-					}
-				}
-			}
+			/* Don't forget to set dirty if vstart has changed */
+			if (vstart != orig_vstart)
+				SET_VS_DIRTY(regs);
+			sbi_misaligned_v_tinst_fixup(&uptrap);
+			return sbi_trap_redirect(regs, &uptrap);
 		}
 	} while (++vstart < vl);
 
 	/* restore clobbered vl/vtype */
-	vsetvl(vl, vtype);
+	vsetvl(vl, vtype); // VSTART resets to 0
 
-	return vl;
+	/*
+	 * No need to set dirty for memory store, but as VSTART resets to
+	 * 0 above, need to set dirty if it's originally not 0.
+	 */
+	if (orig_vstart != 0)
+		SET_VS_DIRTY(regs);
+
+	/* Return a >0 value for the caller to advance mepc */
+	return 1;
 }
 #else
-int sbi_misaligned_v_ld_emulator(int rlen, union sbi_ldst_data *out_val,
-				 struct sbi_trap_context *tcntx)
+int sbi_misaligned_v_ld_emulator(ulong insn, struct sbi_trap_context *tcntx)
 {
-	return 0;
+	/* Unable to emulate, send trap to previous mode. */
+	return sbi_trap_redirect(&tcntx->regs, &tcntx->trap);
 }
-int sbi_misaligned_v_st_emulator(int wlen, union sbi_ldst_data in_val,
-				 struct sbi_trap_context *tcntx)
+
+int sbi_misaligned_v_st_emulator(ulong insn, struct sbi_trap_context *tcntx)
 {
-	return 0;
+	/* Unable to emulate, send trap to previous mode. */
+	return sbi_trap_redirect(&tcntx->regs, &tcntx->trap);
 }
 #endif /* OPENSBI_CC_SUPPORT_VECTOR */

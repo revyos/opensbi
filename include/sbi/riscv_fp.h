@@ -76,6 +76,30 @@
 			: "r"(value), "r"(offset)                                                           \
 			: "t0");                                                                            \
 	})
+
+#define GET_F16_REG(insn, pos, regs) ((u16)GET_F32_REG(insn, pos, regs))
+
+#define SET_F16_REG(insn, pos, regs, val) \
+	(SET_F32_REG(insn, pos, regs, (val) | 0xffff0000))
+
+#define GET_F16_REG_OR_NAN(insn, pos, regs)                             \
+	({                                                              \
+		u64 value = GET_F64_REG(insn, pos, regs);               \
+		if ((value & 0xffffffffffff0000) != 0xffffffffffff0000) \
+			value = 0x7c00;                                 \
+		(u16) value;                                            \
+	})
+
+#define GET_F32_REG_OR_NAN(insn, pos, regs)                             \
+	({                                                              \
+		u64 value = GET_F64_REG(insn, pos, regs);               \
+		if ((value & 0xffffffff00000000) != 0xffffffff00000000) \
+			value = 0x7fc00000;                             \
+		(u32) value;                                            \
+	})
+
+#define GET_F64_REG_OR_NAN(insn, pos, regs) GET_F64_REG(insn, pos, regs)
+
 #define GET_FCSR() csr_read(CSR_FCSR)
 #define SET_FCSR(value) csr_write(CSR_FCSR, (value))
 #define GET_FRM() csr_read(CSR_FRM)
@@ -83,7 +107,11 @@
 #define GET_FFLAGS() csr_read(CSR_FFLAGS)
 #define SET_FFLAGS(value) csr_write(CSR_FFLAGS, (value))
 
-#define SET_FS_DIRTY(regs) (regs->mstatus |= MSTATUS_FS)
+#define SET_FS_DIRTY(regs) do {				\
+	if (sbi_regs_from_virt(regs))			\
+		csr_set(CSR_VSSTATUS, MSTATUS_FS);	\
+	regs->mstatus |= MSTATUS_FS;			\
+} while(0)
 
 #define GET_F32_RS1(insn, regs) (GET_F32_REG(insn, 15, regs))
 #define GET_F32_RS2(insn, regs) (GET_F32_REG(insn, 20, regs))
@@ -91,15 +119,55 @@
 #define GET_F64_RS1(insn, regs) (GET_F64_REG(insn, 15, regs))
 #define GET_F64_RS2(insn, regs) (GET_F64_REG(insn, 20, regs))
 #define GET_F64_RS3(insn, regs) (GET_F64_REG(insn, 27, regs))
-#define SET_F32_RD(insn, regs, val) \
-	(SET_F32_REG(insn, 7, regs, val), SET_FS_DIRTY(regs))
-#define SET_F64_RD(insn, regs, val) \
-	(SET_F64_REG(insn, 7, regs, val), SET_FS_DIRTY(regs))
+#define SET_F32_RD(insn, regs, val) do {	\
+	SET_F32_REG(insn, 7, regs, val);	\
+	SET_FS_DIRTY(regs);			\
+} while(0)
+#define SET_F64_RD(insn, regs, val) do {	\
+	SET_F64_REG(insn, 7, regs, val);	\
+	SET_FS_DIRTY(regs);			\
+} while(0)
+#define SET_F16_RD(insn, regs, val) do {	\
+	SET_F16_REG(insn, 7, regs, val);	\
+	SET_FS_DIRTY(regs);			\
+} while (0)
+#define GET_F16_RS1(insn, regs) (GET_F16_REG(insn, 15, regs))
+#define GET_F16_RS2(insn, regs) (GET_F16_REG(insn, 20, regs))
+#define GET_F16_RS3(insn, regs) (GET_F16_REG(insn, 27, regs))
+
+#define GET_F32_RS1_OR_NAN(insn, regs) (GET_F32_REG_OR_NAN(insn, 15, regs))
+#define GET_F32_RS2_OR_NAN(insn, regs) (GET_F32_REG_OR_NAN(insn, 20, regs))
+#define GET_F32_RS3_OR_NAN(insn, regs) (GET_F32_REG_OR_NAN(insn, 27, regs))
+#define GET_F64_RS1_OR_NAN(insn, regs) (GET_F64_REG_OR_NAN(insn, 15, regs))
+#define GET_F64_RS2_OR_NAN(insn, regs) (GET_F64_REG_OR_NAN(insn, 20, regs))
+#define GET_F64_RS3_OR_NAN(insn, regs) (GET_F64_REG_OR_NAN(insn, 27, regs))
+#define GET_F16_RS1_OR_NAN(insn, regs) (GET_F16_REG_OR_NAN(insn, 15, regs))
+#define GET_F16_RS2_OR_NAN(insn, regs) (GET_F16_REG_OR_NAN(insn, 20, regs))
+#define GET_F16_RS3_OR_NAN(insn, regs) (GET_F16_REG_OR_NAN(insn, 27, regs))
 
 #define GET_F32_RS2C(insn, regs) (GET_F32_REG(insn, 2, regs))
-#define GET_F32_RS2S(insn, regs) (GET_F32_REG(RVC_RS2S(insn), 0, regs))
+#define GET_F32_RS2S(insn, regs) (GET_F32_REG(GET_RS2S_NUM(insn), 0, regs))
 #define GET_F64_RS2C(insn, regs) (GET_F64_REG(insn, 2, regs))
-#define GET_F64_RS2S(insn, regs) (GET_F64_REG(RVC_RS2S(insn), 0, regs))
+#define GET_F64_RS2S(insn, regs) (GET_F64_REG(GET_RS2S_NUM(insn), 0, regs))
+#define SET_F32_RDS(insn, regs, val) do {		\
+	SET_F32_REG(GET_RDS_NUM(insn), 0, regs, val);	\
+	SET_FS_DIRTY(regs);				\
+} while(0)
+#define SET_F64_RDS(insn, regs, val) do {		\
+	SET_F64_REG(GET_RDS_NUM(insn), 0, regs, val);	\
+	SET_FS_DIRTY(regs);				\
+} while(0)
+#define SET_F16_RDS(insn, regs, val) do {		\
+	SET_F16_REG(GET_RDS_NUM(insn), 0, regs, val);	\
+	SET_FS_DIRTY(regs);				\
+} while (0)
+
+#define GET_F32_RS2C_OR_NAN(insn, regs) (GET_F32_REG_OR_NAN(insn, 2, regs))
+#define GET_F32_RS2S_OR_NAN(insn, regs) \
+	(GET_F32_REG_OR_NAN(RVC_RS2S(insn), 0, regs))
+#define GET_F64_RS2C_OR_NAN(insn, regs) (GET_F64_REG_OR_NAN(insn, 2, regs))
+#define GET_F64_RS2S_OR_NAN(insn, regs) \
+	(GET_F64_REG_OR_NAN(RVC_RS2S(insn), 0, regs))
 
 #endif
 

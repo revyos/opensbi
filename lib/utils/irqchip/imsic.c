@@ -147,7 +147,7 @@ int imsic_get_target_file(u32 hartindex)
 	return imsic_get_hart_file(scratch);
 }
 
-static int imsic_external_irqfn(void)
+static int imsic_process_hwirqs(struct sbi_irqchip_device *chip)
 {
 	ulong mirq;
 
@@ -346,9 +346,17 @@ int imsic_data_check(struct imsic_data *imsic)
 	return 0;
 }
 
+static int imsic_hwirq_setup(struct sbi_irqchip_device *chip, u32 hwirq, u32 hwirq_flags)
+{
+	if (hwirq_flags != SBI_HWIRQ_FLAGS_NONE)
+		return SBI_ENOTSUPP;
+	return 0;
+}
+
 static struct sbi_irqchip_device imsic_device = {
 	.warm_init	= imsic_warm_irqchip_init,
-	.irq_handle	= imsic_external_irqfn,
+	.process_hwirqs	= imsic_process_hwirqs,
+	.hwirq_setup	= imsic_hwirq_setup,
 };
 
 int imsic_cold_irqchip_init(struct imsic_data *imsic)
@@ -391,7 +399,18 @@ int imsic_cold_irqchip_init(struct imsic_data *imsic)
 	}
 
 	/* Register irqchip device */
-	sbi_irqchip_add_device(&imsic_device);
+	imsic_device.id = imsic->unique_id;
+	imsic_device.caps = SBI_IRQCHIP_CAPS_MSI;
+	imsic_device.num_hwirq = imsic->num_ids + 1;
+	sbi_hartmask_set_all(&imsic_device.target_harts);
+	rc = sbi_irqchip_add_device(&imsic_device);
+	if (rc)
+		return rc;
+
+	/* Mark hwirq 0 and IPI hwirq as reserved */
+	rc = sbi_irqchip_register_reserved(&imsic_device, 0, IMSIC_IPI_ID + 1);
+	if (rc)
+		return rc;
 
 	/* Register IPI device */
 	sbi_ipi_add_device(&imsic_ipi_device);

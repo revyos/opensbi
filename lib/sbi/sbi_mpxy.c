@@ -13,6 +13,7 @@
 #include <sbi/sbi_hart.h>
 #include <sbi/sbi_hart_protection.h>
 #include <sbi/sbi_heap.h>
+#include <sbi/sbi_irqchip.h>
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_mpxy.h>
 #include <sbi/sbi_scratch.h>
@@ -28,7 +29,7 @@ static unsigned long mpxy_shmem_size = PAGE_SIZE;
 static SBI_LIST_HEAD(mpxy_channel_list);
 
 /** Invalid Physical Address(all bits 1) */
-#define INVALID_ADDR		(-1U)
+#define INVALID_ADDR		(-1UL)
 
 /** MPXY Attribute size in bytes */
 #define ATTR_SIZE		(4)
@@ -255,11 +256,10 @@ static int domain_mpxy_state_data_setup(struct sbi_domain *dom,
 			return SBI_ENOMEM;
 
 		/*
-		 * TODO: Proper support for checking msi support from
-		 * platform. Currently disable msi and sse and use
-		 * polling
+		 * TODO: Proper support for checking sse support from
+		 * platform. Currently disable sse and use polling
 		 */
-		ms->msi_avail = false;
+		ms->msi_avail = !!sbi_irqchip_find_device_by_caps(SBI_IRQCHIP_CAPS_MSI, NULL);
 		ms->sse_avail = false;
 
 		sbi_mpxy_shmem_disable(ms);
@@ -531,8 +531,8 @@ static int mpxy_check_write_std_attr(struct sbi_mpxy_channel *channel,
 		if (attr_val > 1)
 			ret = SBI_ERR_INVALID_PARAM;
 		if (attr_val == 1 &&
-		    (attrs->msi_info.msi_addr_lo == INVALID_ADDR) &&
-		    (attrs->msi_info.msi_addr_hi == INVALID_ADDR))
+		    (attrs->msi_info.msi_addr_lo == (u32)INVALID_ADDR) &&
+		    (attrs->msi_info.msi_addr_hi == (u32)INVALID_ADDR))
 			ret = SBI_ERR_DENIED;
 		break;
 	case SBI_MPXY_ATTR_MSI_ADDR_LO:

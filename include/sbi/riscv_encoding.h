@@ -36,8 +36,10 @@
 #define MSTATUS_SDT			_UL(0x01000000)
 #define MSTATUS32_SD			_UL(0x80000000)
 #if __riscv_xlen == 64
-#define MSTATUS_UXL			_ULL(0x0000000300000000)
-#define MSTATUS_SXL			_ULL(0x0000000C00000000)
+#define MSTATUS_UXL_SHIFT		32
+#define MSTATUS_UXL			(_ULL(3) << MSTATUS_UXL_SHIFT)
+#define MSTATUS_SXL_SHIFT		34
+#define MSTATUS_SXL			(_ULL(3) << MSTATUS_SXL_SHIFT)
 #define MSTATUS_SBE			_ULL(0x0000001000000000)
 #define MSTATUS_MBE			_ULL(0x0000002000000000)
 #define MSTATUS_GVA			_ULL(0x0000004000000000)
@@ -56,6 +58,9 @@
 #endif
 #define MSTATUS32_SD			_UL(0x80000000)
 #define MSTATUS64_SD			_ULL(0x8000000000000000)
+#define MXL_XLEN_32			1
+#define MXL_XLEN_64			2
+#define MXL_TO_XLEN(x)			(1U << (x + 4))
 
 #define SSTATUS_SIE			MSTATUS_SIE
 #define SSTATUS_SPIE_SHIFT		MSTATUS_SPIE_SHIFT
@@ -215,6 +220,10 @@
 
 #endif
 
+#define MNSTATUS_NMIE			(_UL(0x8))
+#define MNSTATUS_MNPV			(_UL(0x80))
+#define MNSTATUS_MNPP			(_UL(0x1800))
+
 #define MHPMEVENT_SSCOF_MASK		_ULL(0xFF00000000000000)
 
 #define ENVCFG_STCE			(_ULL(1) << 63)
@@ -260,6 +269,16 @@
 #define CSR_FFLAGS			0x001
 #define CSR_FRM				0x002
 #define CSR_FCSR			0x003
+
+/* User entropy source */
+#define CSR_SEED			0x015
+#define SEED_OPTS_SHIFT			30
+#define SEED_OPTS_MASK			(_UL(3) << SEED_OPTS_SHIFT)
+#define SEED_OPTS_BIST			(_UL(0) << SEED_OPTS_SHIFT)
+#define SEED_OPTS_WAIT			(_UL(1) << SEED_OPTS_SHIFT)
+#define SEED_OPTS_ES16			(_UL(2) << SEED_OPTS_SHIFT)
+#define SEED_OPTS_DEAD			(_UL(3) << SEED_OPTS_SHIFT)
+#define SEED_ENTROPY_MASK		0xffff
 
 /* User Counters/Timers */
 #define CSR_CYCLE			0xc00
@@ -820,6 +839,12 @@
 #define CSR_CUSTOM10_M_RO_BASE		0xFC0
 #define CSR_CUSTOM10_M_RO_COUNT		0x040
 
+/* Smrnmi extension registers */
+#define CSR_MNSCRATCH				0x740
+#define CSR_MNEPC					0x741
+#define CSR_MNCAUSE					0x742
+#define CSR_MNSTATUS				0x744
+
 /* ===== Trap/Exception Causes ===== */
 
 #define CAUSE_MISALIGNED_FETCH		0x0
@@ -892,12 +917,16 @@
 #define INSN_MATCH_SD			0x3023
 #define INSN_MASK_SD			0x707f
 
+#define INSN_MATCH_FLH			0x1007
+#define INSN_MASK_FLH			0x707f
 #define INSN_MATCH_FLW			0x2007
 #define INSN_MASK_FLW			0x707f
 #define INSN_MATCH_FLD			0x3007
 #define INSN_MASK_FLD			0x707f
 #define INSN_MATCH_FLQ			0x4007
 #define INSN_MASK_FLQ			0x707f
+#define INSN_MATCH_FSH			0x1027
+#define INSN_MASK_FSH			0x707f
 #define INSN_MATCH_FSW			0x2027
 #define INSN_MASK_FSW			0x707f
 #define INSN_MATCH_FSD			0x3027
@@ -939,6 +968,13 @@
 #define INSN_MATCH_C_FSWSP		0xe002
 #define INSN_MASK_C_FSWSP		0xe003
 
+#define INSN_MATCH_C_LBU		0x8000
+#define INSN_MASK_C_LBU			0xfc03
+#define INSN_MATCH_C_SB			0x8800
+#define INSN_MASK_C_SB			0xfc03
+#define INSN_MASK_C_GENERIC_RXS_RXS	0xfc63
+#define INSN_MASK_C_GENERIC_RXS		0xfc7f
+
 #define INSN_MATCH_C_LHU		0x8400
 #define INSN_MASK_C_LHU			0xfc43
 #define INSN_MATCH_C_LH			0x8440
@@ -946,11 +982,158 @@
 #define INSN_MATCH_C_SH			0x8c00
 #define INSN_MASK_C_SH			0xfc43
 
+#define INSN_MATCH_C_ZEXT_B		0x9c61
+#define INSN_MATCH_C_SEXT_B		0x9c65
+#define INSN_MATCH_C_ZEXT_H		0x9c69
+#define INSN_MATCH_C_SEXT_H		0x9c6d
+#define INSN_MATCH_C_ZEXT_W		0x9c71
+#define INSN_MATCH_C_NOT		0x9c75
+
+#define INSN_MATCH_C_MUL		0x9c41
+
 #define INSN_MASK_WFI			0xffffff00
 #define INSN_MATCH_WFI			0x10500000
 
+#define INSN_MASK_FENCE			0x0000707f
+#define INSN_MATCH_FENCE		0x0000000f
 #define INSN_MASK_FENCE_TSO		0xfff0707f
 #define INSN_MATCH_FENCE_TSO		0x8330000f
+#define INSN_MASK_FENCE_I		0x0000707f
+#define INSN_MATCH_FENCE_I		0x0000100f
+
+#define INSN_MASK_CBO			0xfff07fff
+#define INSN_MATCH_CBO_CLEAN		0x0010200f
+#define INSN_MATCH_CBO_FLUSH		0x0020200f
+#define INSN_MATCH_CBO_INVAL		0x0000200f
+#define INSN_MATCH_CBO_ZERO		0x0040200f
+
+/* Zawrs (no mask) */
+#define INSN_MATCH_WRS_NTO		0x00d00073
+#define INSN_MATCH_WRS_STO		0x01d00073
+
+/* generic masks for instruction formats R and I */
+#define INSN_MASK_RTYPE_RD_RS1_RS2	0xfe00707f
+#define INSN_MASK_ITYPE_RD_RS		0xfff0707f
+
+/* Zbs single-bit instructions */
+#define INSN_MATCH_BCLR			0x48001033
+#define INSN_MATCH_BCLRI		0x48001013
+#define INSN_MATCH_BEXT			0x48005033
+#define INSN_MATCH_BEXTI		0x48005013
+#define INSN_MATCH_BINV			0x68001033
+#define INSN_MATCH_BINVI		0x68001013
+#define INSN_MATCH_BSET			0x28001033
+#define INSN_MATCH_BSETI		0x28001013
+
+/* Zbb */
+#define INSN_MATCH_ANDN			0x40007033
+#define INSN_MATCH_MAX			0x0a006033
+#define INSN_MATCH_MAXU			0x0a007033
+#define INSN_MATCH_MIN			0x0a004033
+#define INSN_MATCH_MINU			0x0a005033
+#define INSN_MATCH_ORN			0x40006033
+#define INSN_MATCH_ROL			0x60001033
+#define INSN_MATCH_ROR			0x60005033
+#define INSN_MATCH_RORI			0x60005013
+#define INSN_MATCH_XNOR			0x40004033
+#define INSN_MATCH_CLZ			0x60001013
+#define INSN_MATCH_CTZ			0x60101013
+#define INSN_MATCH_CPOP			0x60201013
+#define INSN_MATCH_ORC_B		0x28705013
+#define INSN_MATCH_REV8_RV32		0x69805013
+#define INSN_MATCH_REV8_RV64		0x6b805013
+#define INSN_MATCH_SEXT_B		0x60401013
+#define INSN_MATCH_SEXT_H		0x60501013
+
+/* Zba */
+#define INSN_MATCH_SH1ADD		0x20002033
+#define INSN_MATCH_SH2ADD		0x20004033
+#define INSN_MATCH_SH3ADD		0x20006033
+
+/* Zbc */
+#define INSN_MATCH_CLMUL		0x0a001033
+#define INSN_MATCH_CLMULH		0x0a003033
+#define INSN_MATCH_CLMULR		0x0a002033
+
+/* Zbkb */
+#define INSN_MATCH_PACK			0x08004033
+#define INSN_MATCH_PACKH		0x08007033
+
+/* Zba word instructions */
+#define INSN_MASK_SLLI_UW		0xfc00707f
+
+#define INSN_MATCH_ADD_UW		0x0800003b
+#define INSN_MATCH_SH1ADD_UW		0x2000203b
+#define INSN_MATCH_SH2ADD_UW		0x2000403b
+#define INSN_MATCH_SH3ADD_UW		0x2000603b
+#define INSN_MATCH_SLLI_UW		0x0800101b
+
+/* Zbb word instructions */
+#define INSN_MATCH_ROLW			0x6000103b
+#define INSN_MATCH_RORW			0x6000503b
+
+#define INSN_MATCH_CLZW			0x6000101b
+#define INSN_MATCH_CTZW			0x6010101b
+#define INSN_MATCH_CPOPW		0x6020101b
+#define INSN_MATCH_ZEXT_H_RV32		0x08004033
+#define INSN_MATCH_ZEXT_H_RV64		0x0800403b
+#define INSN_MATCH_RORIW		0x6000501b
+
+/* Zfhmin floating-point FCVT */
+#define INSN_MATCH_FCVT_S_H		0x40200053
+#define INSN_MATCH_FCVT_H_S		0x44000053
+#define INSN_MATCH_FCVT_D_H		0x42200053
+#define INSN_MATCH_FCVT_H_D		0x44100053
+#define INSN_MATCH_FCVT_Q_H		0x46200053
+#define INSN_MATCH_FCVT_H_Q		0x44300053
+/* Zfh floating-point to/from integer FCVT */
+#define INSN_MATCH_FCVT_W_H		0xc4000053
+#define INSN_MATCH_FCVT_WU_H		0xc4100053
+#define INSN_MATCH_FCVT_H_W		0xd4000053
+#define INSN_MATCH_FCVT_H_WU		0xd4100053
+/* Zfhmin FMV */
+#define INSN_MATCH_FMV_X_H		0xe4000053
+#define INSN_MATCH_FMV_H_X		0xf4000053
+/* Zfa */
+#define INSN_MATCH_FLI_S		0xf0100053
+#define INSN_MATCH_FLI_D		0xf2100053
+#define INSN_MATCH_FLI_H		0xf4100053
+
+#define INSN_MATCH_FMINM_S		0x28002053
+#define INSN_MATCH_FMAXM_S		0x28003053
+#define INSN_MATCH_FMINM_D		0x2a002053
+#define INSN_MATCH_FMAXM_D		0x2a003053
+#define INSN_MATCH_FMINM_H		0x2c002053
+#define INSN_MATCH_FMAXM_H		0x2c003053
+
+#define INSN_MATCH_FROUND_S		0x40400053
+#define INSN_MATCH_FROUNDNX_S		0x40500053
+#define INSN_MATCH_FROUND_D		0x42400053
+#define INSN_MATCH_FROUNDNX_D		0x42500053
+#define INSN_MATCH_FROUND_H		0x44400053
+#define INSN_MATCH_FROUNDNX_H		0x44500053
+
+#define INSN_MATCH_FCVTMOD_W_D		0xc2801053
+
+#define INSN_MATCH_FLTQ_S		0xa0005053
+#define INSN_MATCH_FLEQ_S		0xa0004053
+#define INSN_MATCH_FLTQ_D		0xa2005053
+#define INSN_MATCH_FLEQ_D		0xa2004053
+#define INSN_MATCH_FLTQ_H		0xa4005053
+#define INSN_MATCH_FLEQ_H		0xa4004053
+
+/* Zimop */
+#define INSN_MASK_MOP_R_N		0xb3c0707f
+#define INSN_MATCH_MOP_R_N		0x81c04073
+#define INSN_MASK_MOP_RR_N		0xb200707f
+#define INSN_MATCH_MOP_RR_N		0x82004073
+/* Zcmop */
+#define INSN_MASK_C_MOP_N		0xf8ff
+#define INSN_MATCH_C_MOP_N		0x6081
+
+/* Zicond */
+#define INSN_MATCH_CZERO_EQZ		0x0e005033
+#define INSN_MATCH_CZERO_NEZ		0x0e007033
 
 #define INSN_MASK_VECTOR_UNIT_STRIDE		0xfdf0707f
 #define INSN_MASK_VECTOR_FAULT_ONLY_FIRST	0xfdf0707f
@@ -1024,6 +1207,26 @@
 #define INSN_MATCH_VS2RV		0x22800027
 #define INSN_MATCH_VS4RV		0x62800027
 #define INSN_MATCH_VS8RV		0xe2800027
+
+/* Zvbb */
+#define INSN_MASK_VXUNARY0		0xfc0ff07f
+#define INSN_MASK_VVBINARY0		0xfc00707f
+#define INSN_MATCH_VANDNVV		0X04000057
+#define INSN_MATCH_VANDNVX		0x04004057
+#define INSN_MATCH_VBREVV		0x48052057
+#define INSN_MATCH_VBREV8V		0x48042057
+#define INSN_MATCH_VREV8V		0x4804a057
+#define INSN_MATCH_VCLZV		0x48062057
+#define INSN_MATCH_VCTZV		0x4806a057
+#define INSN_MATCH_VCPOPV		0x48072057
+#define INSN_MATCH_VROLVV		0x54000057
+#define INSN_MATCH_VROLVX		0x54004057
+#define INSN_MATCH_VRORVV		0x50000057
+#define INSN_MATCH_VRORVX		0x50004057
+#define INSN_MATCH_VRORVI		0x50003057
+#define INSN_MATCH_VWSLLVV		0xd4000057
+#define INSN_MATCH_VWSLLVX		0xd4004057
+#define INSN_MATCH_VWSLLVI		0xd4003057
 
 #define INSN_OPCODE_MASK		0x7f
 #define INSN_OPCODE_VECTOR_LOAD		0x07
@@ -1344,6 +1547,7 @@
 #define VSEW_MASK			0x3
 #define VLMUL_MASK			0x7
 #define VD_MASK				0x1f
+#define VS1_MASK			0x1f
 #define VS2_MASK			0x1f
 #define INSN_16BIT_MASK			0x3
 #define INSN_32BIT_MASK			0x1c
@@ -1359,6 +1563,7 @@
 #define SH_VSEW				3
 #define SH_VIEW				12
 #define SH_VD				7
+#define SH_VS1				15
 #define SH_VS2				20
 #define SH_VM				25
 #define SH_MEW				28
@@ -1368,6 +1573,9 @@
 #define SH_RS2C				2
 
 #define RV_X(x, s, n)			(((x) >> (s)) & ((1 << (n)) - 1))
+#define RVC_LB_IMM(x)			((RV_X(x, 6, 1) << 0) | \
+					 (RV_X(x, 5, 1) << 1))
+#define RVC_LH_IMM(x)			 (RV_X(x, 5, 1) << 1)
 #define RVC_LW_IMM(x)			((RV_X(x, 6, 1) << 2) | \
 					 (RV_X(x, 10, 3) << 3) | \
 					 (RV_X(x, 5, 1) << 6))
@@ -1379,6 +1587,10 @@
 #define RVC_LDSP_IMM(x)			((RV_X(x, 5, 2) << 3) | \
 					 (RV_X(x, 12, 1) << 5) | \
 					 (RV_X(x, 2, 3) << 6))
+#define RVC_SB_IMM(x)			RVC_LB_IMM(x)
+#define RVC_SH_IMM(x)			RVC_LH_IMM(x)
+#define RVC_SW_IMM(x)			RVC_LW_IMM(x)
+#define RVC_SD_IMM(x)			RVC_LD_IMM(x)
 #define RVC_SWSP_IMM(x)			((RV_X(x, 9, 4) << 2) | \
 					 (RV_X(x, 7, 2) << 6))
 #define RVC_SDSP_IMM(x)			((RV_X(x, 10, 3) << 3) | \
@@ -1398,6 +1610,7 @@
 #define GET_RS2S_NUM(insn)		RVC_RS2S(insn)
 #define GET_RS2C_NUM(insn)		RVC_RS2(insn)
 #define GET_RD_NUM(insn)		((insn & MASK_RD) >> SH_RD)
+#define GET_RDS_NUM(insn)		RVC_RS2S(insn)
 #define GET_CSR_NUM(insn)		((insn & MASK_CSR) >> SHIFT_CSR)
 #define GET_AQRL(insn)			((insn & MASK_AQRL) >> SHIFT_AQRL)
 
@@ -1407,6 +1620,7 @@
 
 #define IS_MASKED(insn)			(((insn >> SH_VM) & VM_MASK) == 0)
 #define GET_VD(insn)			((insn >> SH_VD) & VD_MASK)
+#define GET_VS1(insn)			((insn >> SH_VS1) & VS1_MASK)
 #define GET_VS2(insn)			((insn >> SH_VS2) & VS2_MASK)
 #define GET_VIEW(insn)			(((insn) >> SH_VIEW) & VIEW_MASK)
 #define GET_MEW(insn)			(((insn) >> SH_MEW) & 1)

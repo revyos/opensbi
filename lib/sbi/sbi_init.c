@@ -216,7 +216,10 @@ static void wake_coldboot_harts(struct sbi_scratch *scratch)
 {
 	/* Mark coldboot done */
 	__smp_store_release(&coldboot_done, 1);
+	RISCV_FENCE(w, o);
 }
+
+unsigned long __attribute__((weak)) __stack_chk_guard = 0x95B5FF5A;
 
 static unsigned long entry_count_offset;
 static unsigned long init_count_offset;
@@ -265,11 +268,53 @@ static void __noreturn init_coldboot(struct sbi_scratch *scratch, u32 hartid)
 	 */
 	wake_coldboot_harts(scratch);
 
-	rc = sbi_platform_early_init(plat, true);
+	rc = sbi_hart_init(scratch, true);
 	if (rc)
 		sbi_hart_hang();
 
-	rc = sbi_hart_init(scratch, true);
+	/*
+	 * Initialize stack guard via Zkr entropy source if Zkr is
+	 * implemented according to device tree. Writing new seed value
+	 * to __stack_chk_guard is safe here because function doesn't
+	 * return and no check against value on entry will be done.
+	 */
+	if (sbi_hart_has_extension(scratch, SBI_HART_EXT_ZKR)) {
+		unsigned long guard_val = 0;
+		int chunks = sizeof(unsigned long) / sizeof(uint16_t);
+#ifndef CONFIG_ZKR_POLL_BUDGET
+#define CONFIG_ZKR_POLL_BUDGET		1000
+#endif
+		unsigned int tries = CONFIG_ZKR_POLL_BUDGET;
+		bool res = false;
+
+		while (chunks && tries) {
+			unsigned long seed = csr_swap(CSR_SEED, 0);
+			unsigned long opst = seed & SEED_OPTS_MASK;
+			res = false;
+
+			if (opst == SEED_OPTS_DEAD) {
+				break;
+			}
+			if (opst == SEED_OPTS_ES16) {
+				guard_val = (guard_val << 16) | (seed & SEED_ENTROPY_MASK);
+				chunks--;
+				res = true;
+				/* Successful read doesn't consume a try */
+				tries++;
+			}
+
+			tries--;
+			continue;
+		}
+		if (res)
+			__stack_chk_guard = guard_val;
+	}
+
+	rc = sbi_timer_init(scratch, true);
+	if (rc)
+		sbi_hart_hang();
+
+	rc = sbi_platform_early_init(plat, true);
 	if (rc)
 		sbi_hart_hang();
 
@@ -304,12 +349,6 @@ static void __noreturn init_coldboot(struct sbi_scratch *scratch, u32 hartid)
 	rc = sbi_tlb_init(scratch, true);
 	if (rc) {
 		sbi_printf("%s: tlb init failed (error %d)\n", __func__, rc);
-		sbi_hart_hang();
-	}
-
-	rc = sbi_timer_init(scratch, true);
-	if (rc) {
-		sbi_printf("%s: timer init failed (error %d)\n", __func__, rc);
 		sbi_hart_hang();
 	}
 
@@ -424,11 +463,15 @@ static void __noreturn init_warm_startup(struct sbi_scratch *scratch,
 	if (rc)
 		sbi_hart_hang();
 
-	rc = sbi_platform_early_init(plat, false);
+	rc = sbi_hart_init(scratch, false);
 	if (rc)
 		sbi_hart_hang();
 
-	rc = sbi_hart_init(scratch, false);
+	rc = sbi_timer_init(scratch, false);
+	if (rc)
+		sbi_hart_hang();
+
+	rc = sbi_platform_early_init(plat, false);
 	if (rc)
 		sbi_hart_hang();
 
@@ -449,10 +492,6 @@ static void __noreturn init_warm_startup(struct sbi_scratch *scratch,
 		sbi_hart_hang();
 
 	rc = sbi_tlb_init(scratch, false);
-	if (rc)
-		sbi_hart_hang();
-
-	rc = sbi_timer_init(scratch, false);
 	if (rc)
 		sbi_hart_hang();
 

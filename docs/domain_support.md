@@ -159,6 +159,13 @@ The DT properties of a domain instance DT node are as follows:
 * **possible-harts** (Optional) - The list of CPU DT node phandles for the
   the domain instance. This list represents the possible HARTs of the
   domain instance.
+* **root-regions-inheritance** (Optional) - A string property controlling
+  how memory regions are inherited from **the ROOT domain**, which are then
+  overlaid with regions specified in the **regions** property for additional
+  restrictions. The allowed values are:
+  * "all" - inherit all memory regions from **the ROOT domain**
+  * "m-only" - inherit M-mode only memory regions from **the ROOT domain**
+  If this DT property is absent, behavior is the same as "m-only".
 * **regions** (Optional) - The list of domain memory region DT node phandle
   and access permissions for the domain instance. Each list entry is a pair
   of DT node phandle and access permissions. The access permissions are
@@ -173,9 +180,9 @@ The DT properties of a domain instance DT node are as follows:
   Any region of a domain defined in DT node cannot have only M-bits set
   in access permissions i.e. it cannot be an m-mode only accessible region.
 * **boot-hart** (Optional) - The DT node phandle of the HART booting the
-  domain instance. If coldboot HART is assigned to the domain instance then
-  this DT property is ignored and the coldboot HART is assumed to be the
-  boot HART of the domain instance.
+  domain instance. If not specified, defaults to the coldboot HART. Note that
+  if the coldboot HART is assigned to this domain, it will be forced as
+  the boot HART regardless of this property.
 * **next-arg1** (Optional) - The 64 bit next booting stage arg1 for the
   domain instance. If this DT property is not available and coldboot HART
   is not assigned to the domain instance then **next booting stage arg1 of coldboot HART**

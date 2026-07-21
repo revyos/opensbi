@@ -115,7 +115,7 @@ static int fwft_misaligned_delegation_supported(struct fwft_config *conf)
 	if (!misa_extension('S'))
 		return SBI_ENOTSUPP;
 
-	return SBI_OK;
+	return SBI_ENOTSUPP;
 }
 
 static int fwft_set_misaligned_delegation(struct fwft_config *conf,
@@ -160,8 +160,16 @@ static int fwft_get_double_trap(struct fwft_config *conf, unsigned long *value)
 
 static int fwft_adue_supported(struct fwft_config *conf)
 {
+	/*
+	 * FWFT.PTE_AD_HW_UPDATING is only supported when both Svade and Svadu
+	 * are supported. We need both in order to support toggling and to
+	 * ensure the reset value of zero is valid (it wouldn't be when only
+	 * Svadu is supported).
+	 */
 	if (!sbi_hart_has_extension(sbi_scratch_thishart_ptr(),
-				    SBI_HART_EXT_SVADU))
+				    SBI_HART_EXT_SVADU) ||
+	    !sbi_hart_has_extension(sbi_scratch_thishart_ptr(),
+				    SBI_HART_EXT_SVADE))
 		return SBI_ENOTSUPP;
 
 	return SBI_OK;
@@ -227,9 +235,11 @@ static int fwft_get_sstack(struct fwft_config *conf, unsigned long *value)
 #if __riscv_xlen > 32
 static int fwft_pmlen_supported(struct fwft_config *conf)
 {
+#ifndef CONFIG_EMU_SUPM
 	if (!sbi_hart_has_extension(sbi_scratch_thishart_ptr(),
 				    SBI_HART_EXT_SMNPM))
 		return SBI_ENOTSUPP;
+#endif
 
 	return SBI_OK;
 }
@@ -252,11 +262,28 @@ static int fwft_set_pmlen(struct fwft_config *conf, unsigned long value)
 		return SBI_EINVAL;
 	}
 
+#ifdef CONFIG_EMU_SUPM
+	/* Reset emulated pointer masking */
+	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
+	scratch->sw_pm = 0;
+
+	/* Don't even try to change MENVCFG if absent */
+	if (!sbi_hart_has_csr(scratch, SBI_HART_CSR_MENVCFG)) {
+		scratch->sw_pm = value;
+		return SBI_OK;
+	}
+#endif
+
 	prev = csr_read_clear(CSR_MENVCFG, ENVCFG_PMM);
 	csr_set(CSR_MENVCFG, pmm);
 	if ((csr_read(CSR_MENVCFG) & ENVCFG_PMM) != pmm) {
 		csr_write(CSR_MENVCFG, prev);
+#ifdef CONFIG_EMU_SUPM
+		/* Instead of returning SBI_EINVAL, enable emulation */
+		scratch->sw_pm = value;
+#else
 		return SBI_EINVAL;
+#endif
 	}
 
 	return SBI_OK;
@@ -264,6 +291,21 @@ static int fwft_set_pmlen(struct fwft_config *conf, unsigned long value)
 
 static int fwft_get_pmlen(struct fwft_config *conf, unsigned long *value)
 {
+#ifdef CONFIG_EMU_SUPM
+	/* Check for emulated pointer masking */
+	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
+	if (scratch->sw_pm) {
+		*value = scratch->sw_pm;
+		return SBI_OK;
+	}
+
+	/* Handle disabled pointer masking in the absence of MENVCFG */
+	if (!sbi_hart_has_csr(scratch, SBI_HART_CSR_MENVCFG)) {
+		*value = 0;
+		return SBI_OK;
+	}
+#endif
+
 	switch (csr_read(CSR_MENVCFG) & ENVCFG_PMM) {
 	case ENVCFG_PMM_PMLEN_0:
 		*value = 0;
