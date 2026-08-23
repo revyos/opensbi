@@ -15,6 +15,8 @@
 #include <sbi/sbi_hsm.h>
 #include <sbi/sbi_pmu.h>
 #include <sbi/sbi_scratch.h>
+#include <sbi/sbi_system.h>
+#include <sbi/sbi_timer.h>
 
 #define SUN252I_V861_CCU_BASE		((void *)0x02001000)
 #define SUN252I_V861_RISCV_CFG_BGR		0x50c
@@ -34,6 +36,11 @@
 #define SUN252I_V861_CORE_MODE_RV64		BIT(9)
 
 #define SUN252I_V861_HART_COUNT		2
+
+#define SUN252I_V861_WDT_BASE		((void *)0x08009000)
+#define SUN252I_V861_WDT_CFG		0x14
+#define SUN252I_V861_WDT_MODE		0x18
+#define SUN252I_V861_WDT_KEY		0x16aa0000
 
 extern void sun252i_v861_secondary_entry(void);
 unsigned long sun252i_v861_secondary_target[SUN252I_V861_HART_COUNT];
@@ -132,6 +139,52 @@ static const struct sbi_hsm_device sun252i_v861_hsm = {
 	.hart_stop = sun252i_v861_hart_stop,
 };
 
+static int sun252i_v861_reset_check(u32 type, u32 reason)
+{
+	switch (type) {
+	case SBI_SRST_RESET_TYPE_COLD_REBOOT:
+	case SBI_SRST_RESET_TYPE_WARM_REBOOT:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+static void sun252i_v861_reset(u32 type, u32 reason)
+{
+	u32 value;
+
+	value = readl(SUN252I_V861_WDT_BASE + SUN252I_V861_WDT_CFG);
+	value &= ~BIT(0);
+	writel(value | SUN252I_V861_WDT_KEY,
+	       SUN252I_V861_WDT_BASE + SUN252I_V861_WDT_CFG);
+	sbi_timer_mdelay(1);
+
+	writel(SUN252I_V861_WDT_KEY | BIT(0),
+	       SUN252I_V861_WDT_BASE + SUN252I_V861_WDT_CFG);
+	writel(SUN252I_V861_WDT_KEY,
+	       SUN252I_V861_WDT_BASE + SUN252I_V861_WDT_MODE);
+	value = readl(SUN252I_V861_WDT_BASE + SUN252I_V861_WDT_MODE);
+	writel(value | SUN252I_V861_WDT_KEY | BIT(0),
+	       SUN252I_V861_WDT_BASE + SUN252I_V861_WDT_MODE);
+
+	sbi_hart_hang();
+}
+
+static struct sbi_system_reset_device sun252i_v861_reset_device = {
+	.name = "sun252i-wdt",
+	.system_reset_check = sun252i_v861_reset_check,
+	.system_reset = sun252i_v861_reset,
+};
+
+static int sun252i_v861_early_init(bool cold_boot)
+{
+	if (cold_boot)
+		sbi_system_reset_add_device(&sun252i_v861_reset_device);
+
+	return generic_early_init(cold_boot);
+}
+
 static int sun252i_v861_final_init(bool cold_boot)
 {
 	if (cold_boot) {
@@ -171,6 +224,7 @@ static int sun252i_v861_extensions_init(bool cold_boot)
 static int sun252i_v861_platform_init(const void *fdt, int nodeoff,
 				   const struct fdt_match *match)
 {
+	generic_platform_ops.early_init = sun252i_v861_early_init;
 	generic_platform_ops.final_init = sun252i_v861_final_init;
 	generic_platform_ops.extensions_init = sun252i_v861_extensions_init;
 
