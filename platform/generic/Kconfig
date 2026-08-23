@@ -34,6 +34,17 @@ config PLATFORM_ALLWINNER_D1
 	select THEAD_C9XX_PMU
 	default n
 
+config PLATFORM_ALLWINNER_V861
+	bool "Allwinner V861/V881 support"
+	depends on FDT_IRQCHIP_PLIC
+	select THEAD_C9XX_PMU
+	default n
+	help
+	  Enable the Allwinner V861/V881 platform override.
+	  This initializes the C907 implementation registers and provides
+	  CPU power management and system reset through the sunxi PMC and
+	  watchdog, using the execution width selected for the firmware.
+
 config PLATFORM_ANDES_AE350
 	bool "Andes AE350 support"
 	select ANDES_PMU
