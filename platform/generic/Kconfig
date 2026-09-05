@@ -9,6 +9,11 @@ config PLATFORM_GENERIC
 
 if PLATFORM_GENERIC
 
+config PLATFORM_ZHIHE_A210
+	bool "ZhiHe A210 DEV support"
+	depends on FDT_IRQCHIP_PLIC && FDT_IPI_MSWI && FDT_TIMER_MTIMER
+	default n
+
 config PLATFORM_GENERIC_NAME
 	string "Platform default name"
 	default "Generic"
