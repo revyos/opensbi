@@ -9,10 +9,18 @@
  */
 
 #include <platform_override.h>
+#include <zhihe/a210.h>
+
+static bool a210_cold_boot_allowed(u32 hartid)
+{
+	/* Cache setup must precede the first stack access, not run here. */
+	return hartid == 0;
+}
 
 static int a210_platform_init(const void *fdt, int nodeoff,
 			      const struct fdt_match *match)
 {
+	generic_platform_ops.cold_boot_allowed = a210_cold_boot_allowed;
 	return 0;
 }
 
