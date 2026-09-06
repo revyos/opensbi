@@ -442,7 +442,7 @@ static struct thead_generic_quirks thead_th1520_quirks = {
 */
 
 static struct thead_generic_quirks thead_th1520_quirks = {
-	.errata = THEAD_QUIRK_ERRATA_LOGHT_PPU | THEAD_QUIRK_ERRATA_XTHEADSSTC,
+	.errata = THEAD_QUIRK_ERRATA_LOGHT_PPU | THEAD_QUIRK_ERRATA_XTHEADSSTC | THEAD_QUIRK_ERRATA_THEAD_PMU,
 };
 
 static struct thead_generic_quirks canaan_k230_quirks = {
