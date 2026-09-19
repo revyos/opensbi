@@ -12,3 +12,7 @@ platform-objs-$(CONFIG_THEAD_C9XX_ERRATA) += thead/thead_c9xx_errata_tlb_flush.o
 
 carray-platform_override_modules-$(CONFIG_PLATFORM_THEAD) += thead_generic
 platform-objs-$(CONFIG_PLATFORM_THEAD) += thead/thead-generic.o
+ifeq ($(PLATFORM_RISCV_XLEN), 64)
+platform-objs-$(CONFIG_PLATFORM_THEAD) += thead/th1520_hsm.o
+platform-objs-$(CONFIG_PLATFORM_THEAD) += thead/th1520_warm.o
+endif

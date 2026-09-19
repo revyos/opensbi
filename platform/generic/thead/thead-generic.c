@@ -9,6 +9,7 @@
 #include <platform_override.h>
 #include <thead/c9xx_errata.h>
 #include <thead/c9xx_pmu.h>
+#include <thead/th1520.h>
 #include <sbi/sbi_const.h>
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_pmu.h>
@@ -19,6 +20,7 @@
 
 struct thead_generic_quirks {
 	u64	errata;
+	int (*early_init)(bool cold_boot);
 };
 
 static int thead_tlb_flush_early_init(bool cold_boot)
@@ -26,6 +28,15 @@ static int thead_tlb_flush_early_init(bool cold_boot)
 	thead_register_tlb_flush_trap_handler();
 
 	return generic_early_init(cold_boot);
+}
+
+static int th1520_early_init(bool cold_boot)
+{
+	int ret = thead_tlb_flush_early_init(cold_boot);
+
+	if (ret || !cold_boot)
+		return ret;
+	return th1520_hsm_init();
 }
 
 static int thead_pmu_extensions_init(bool cold_boot)
@@ -74,11 +85,15 @@ static int thead_generic_platform_init(const void *fdt, int nodeoff,
 		sbi_tlb_set_local_operations(&tlb_local_ops);
 	}
 
+	if (quirks->early_init)
+		generic_platform_ops.early_init = quirks->early_init;
+
 	return 0;
 }
 
 static const struct thead_generic_quirks thead_th1520_quirks = {
 	.errata = THEAD_QUIRK_ERRATA_TLB_FLUSH | THEAD_QUIRK_ERRATA_THEAD_PMU,
+	.early_init = th1520_early_init,
 };
 
 static const struct thead_generic_quirks thead_pmu_quirks = {
