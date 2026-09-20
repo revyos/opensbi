@@ -38,3 +38,8 @@ libsbiutils-objs-$(CONFIG_FDT_RESET_SYSCON) += reset/fdt_reset_syscon.o
 
 carray-fdt_early_drivers-$(CONFIG_FDT_RESET_RPMI) += fdt_reset_rpmi
 libsbiutils-objs-$(CONFIG_FDT_RESET_RPMI) += reset/fdt_reset_rpmi.o
+
+ifeq ($(PLATFORM_RISCV_XLEN), 64)
+carray-fdt_early_drivers-$(CONFIG_FDT_RESET_TH1520) += fdt_reset_th1520
+libsbiutils-objs-$(CONFIG_FDT_RESET_TH1520) += reset/fdt_reset_th1520.o
+endif

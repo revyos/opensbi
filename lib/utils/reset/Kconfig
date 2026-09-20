@@ -55,6 +55,10 @@ config FDT_RESET_SYSCON
 	depends on FDT_REGMAP
 	default n
 
+config FDT_RESET_TH1520
+	bool "T-Head TH1520 reset driver"
+	default n
+
 endif
 
 endmenu

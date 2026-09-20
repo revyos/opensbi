@@ -10,3 +10,14 @@ DDR, shared L2 and IOPMP.
 
 Other partial reset states are rejected. Later stop/start cycles use
 parking and IPIs. Per-hart power-off and suspend are not supported.
+
+## Reset
+
+`CONFIG_FDT_RESET_TH1520` enables the RV64 driver. The SoC root node
+provides WDT0 reboot; AON adds reboot and shutdown when E902 is running.
+
+AON requires enabled `thead,th1520-aon` and `thead,th1520-mbox` nodes.
+The driver follows the named `aon` mailbox on channel 1 and reads its
+`local` and `remote-icu0` register windows from the device tree.
+
+Reboot tries AON before WDT0. Failed shutdown never triggers a reboot.
