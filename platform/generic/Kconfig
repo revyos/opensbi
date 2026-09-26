@@ -10,7 +10,9 @@ config PLATFORM_GENERIC
 if PLATFORM_GENERIC
 
 config PLATFORM_ZHIHE_A210
-	bool "ZhiHe A210 DEV support"
+	bool "Zhihe A210 support"
+	select FDT_RESET
+	select FDT_RESET_A210
 	depends on FDT_IRQCHIP_PLIC && FDT_IPI_MSWI && FDT_TIMER_MTIMER
 	default n
 

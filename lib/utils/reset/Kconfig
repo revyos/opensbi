@@ -9,6 +9,10 @@ config FDT_RESET
 
 if FDT_RESET
 
+config FDT_RESET_A210
+	bool "Zhihe A210 AON reset driver"
+	default n
+
 config FDT_RESET_ATCWDT200
 	bool "Andes WDT FDT reset driver"
 	depends on FDT_HSM_ANDES_ATCSMU
