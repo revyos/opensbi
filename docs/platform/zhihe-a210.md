@@ -51,20 +51,25 @@ as vendor settings.
 
 ## System reset
 
-The a210-reset driver uses the AON firmware's watchdog service for SBI
-SRST reboot and power-off. Boot firmware loads AON; OpenSBI checks its
-ready marker and E902 reset-release bit. Mailbox addresses come from the
-zhihe,a210-aon node and its aon0 mailbox reference. SRST stops the other
-harts before taking over the mailbox, drains pending responses, and uses
-bounded waits. Reboot falls back to the SoC system-reset register if AON
-is unavailable or does not reset the system. Shutdown has no reboot
-fallback and is advertised only when AON is ready.
+The A210 reset driver uses SCMI System Power for SBI SRST reboot and
+power-off. Boot firmware starts the E902 service. OpenSBI finds its tx
+mailbox and shared-memory channel through the arm,scmi node, using the
+first (A2P) channel and ignoring a following notification channel, then
+probes System Power directly. The OS does not need a protocol@12 child for SBI
+reset to work. Reboot retains a native system-reset fallback if the
+service is unavailable; shutdown is advertised only after a successful
+System Power version query.
 
-Linux reboot through SBI SRST has reached coreboot and EDK2 on Melon Pi
-without invoking the reset-register fallback. The test unloads the
-Linux AON reboot driver first to exclude its direct firmware callback.
-The reset-register fallback has also been tested. AON power-off remains
-unverified.
+The generic SRST path sends asynchronous HALT IPIs. Before taking over
+the OS channel, the A210 client waits for all other assigned harts to
+reach STOPPED, then waits for any firmware transaction to complete.
+Both waits are bounded. A failed hart rendezvous prevents a new SCMI
+request; cold reset can still use the native fallback.
+
+The SCMI client has been cross-built and RAM-loaded with the paired
+boot chain. Its SRST channel takeover, shutdown and cold reset still need
+hardware validation. Previous Linux SRST and fallback tests used the
+legacy AON client.
 
 D2D, an OP-TEE dispatcher, private IOPMP SBI services and CPU power gating
 are not implemented.
