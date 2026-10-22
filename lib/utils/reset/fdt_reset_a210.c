@@ -1,118 +1,84 @@
-/* SPDX-License-Identifier: BSD-2-Clause */
+// SPDX-License-Identifier: BSD-2-Clause
 /* Copyright (C) 2026 Han Gao <gaohan@iscas.ac.cn> */
 
 #include <libfdt.h>
 #include <sbi/riscv_io.h>
 #include <sbi/sbi_bitops.h>
 #include <sbi/sbi_console.h>
+#include <sbi/sbi_domain.h>
 #include <sbi/sbi_ecall_interface.h>
 #include <sbi/sbi_error.h>
+#include <sbi/sbi_hsm.h>
 #include <sbi/sbi_system.h>
 #include <sbi/sbi_timer.h>
 #include <sbi_utils/fdt/fdt_driver.h>
 #include <sbi_utils/fdt/fdt_helper.h>
 
-#define A210_PERI0_CLOCK_ENABLE	0x00300200UL
-#define A210_PERI0_MBOX_CLOCKS	(BIT(5) | BIT(6))
-#define A210_PERI1_CLOCK_ENABLE	0x02010200UL
-#define A210_PERI1_MASTER_CLOCKS	(BIT(16) | BIT(17))
 #define A210_RESET_ENABLE	0x30842070UL
 #define A210_RESET_REQUEST	0x30846078UL
 #define A210_RESET_SYSTEM	BIT(0)
-#define A210_AON_READY		0xfeabdeff
-#define A210_AON_RESET_RELEASE	BIT(1)
 #define MBOX_GENERATE		0x10
-#define MBOX_INFO(n)		(0x14 + 4 * (n))
 #define MBOX_DATA_READY		BIT(6)
-#define MBOX_ACK_READY		BIT(7)
-#define MBOX_ACK_MAGIC		0xdeadbeaf
-#define AON_RPC_VERSION		2
-#define AON_RPC_WORDS		7
-#define AON_WDG_SERVICE		5
-#define AON_NO_REPLY		BIT(6)
-#define AON_REPLY		BIT(7)
-#define AON_RESTART		5
-#define AON_POWER_OFF		7
-#define AON_TIMEOUT_MS		1000
+#define SMT_STATUS		0x04
+#define SMT_FLAGS		0x10
+#define SMT_LENGTH		0x14
+#define SMT_HEADER		0x18
+#define SMT_PAYLOAD		0x1c
+#define SMT_FREE		BIT(0)
+#define SMT_SIZE		256
+#define SCMI_SYSTEM_POWER	0x12
+#define SCMI_VERSION		0
+#define SCMI_STATE_SET		3
+#define SCMI_SHUTDOWN		0
+#define SCMI_COLD_RESET		1
+#define SCMI_POLL_US		100
+#define SCMI_TIMEOUT_US		250000
 
-static void *aon_local;
-static void *aon_remote;
-static bool aon_ready;
+static void *scmi_shmem;
+static void *scmi_doorbell;
+static u32 scmi_token;
+static bool scmi_ready;
 
-static void a210_aon_ack(void)
+static int a210_scmi_wait(void)
 {
-	writel(0, aon_local + MBOX_INFO(0));
-	writel(0, aon_local + MBOX_GENERATE);
-	writel(MBOX_ACK_MAGIC, aon_remote + MBOX_INFO(7));
-	/* Unlike TH1520, the A210 mailbox also accepts an ACK doorbell. */
-	writel(MBOX_ACK_READY, aon_remote + MBOX_GENERATE);
+	unsigned int elapsed;
+
+	for (elapsed = 0; elapsed < SCMI_TIMEOUT_US; elapsed += SCMI_POLL_US) {
+		if (readl(scmi_shmem + SMT_STATUS) & SMT_FREE)
+			return 0;
+		sbi_timer_udelay(SCMI_POLL_US);
+	}
+	return SBI_ETIMEDOUT;
 }
 
-static int a210_aon_request(u8 function)
+static int a210_scmi_request(u32 command, const u32 *args, unsigned int count)
 {
-	bool reply = function == AON_POWER_OFF;
-	u32 header, status;
+	u32 header = ((scmi_token++ & 0x3ff) << 18) |
+		     (SCMI_SYSTEM_POWER << 10) | command;
 	unsigned int i;
-	void *clock;
+	int ret;
 
-	/* SRST stops the other harts before taking over the AP mailbox. */
-	clock = (void *)A210_PERI1_CLOCK_ENABLE;
-	writel(readl(clock) | A210_PERI1_MASTER_CLOCKS, clock);
-	clock = (void *)A210_PERI0_CLOCK_ENABLE;
-	writel(readl(clock) | A210_PERI0_MBOX_CLOCKS, clock);
-	readl(clock);
-
-	/* Release a response left pending by the stopped operating system. */
-	if (readl(aon_local + MBOX_INFO(0))) {
-		a210_aon_ack();
-		sbi_timer_mdelay(1);
-	}
-	for (i = 0; i < AON_TIMEOUT_MS; i++) {
-		if (!readl(aon_remote + MBOX_INFO(0)))
-			break;
-		if (readl(aon_local + MBOX_INFO(0)))
-			a210_aon_ack();
-		sbi_timer_mdelay(1);
-	}
-	if (i == AON_TIMEOUT_MS)
-		return SBI_ETIMEDOUT;
-
-	writel(0, aon_local + MBOX_GENERATE);
-	writel(0, aon_local + MBOX_INFO(0));
-	writel(0, aon_local + MBOX_INFO(7));
-	writel(0, aon_remote + MBOX_INFO(7));
-	for (i = 1; i < AON_RPC_WORDS; i++)
-		writel(0, aon_remote + MBOX_INFO(i));
-	header = AON_RPC_VERSION | (AON_RPC_WORDS << 8) |
-		 ((AON_WDG_SERVICE | (reply ? 0 : AON_NO_REPLY)) << 16) |
-		 ((u32)function << 24);
-	writel(header, aon_remote + MBOX_INFO(0));
-	writel(MBOX_DATA_READY, aon_remote + MBOX_GENERATE);
-
-	for (i = 0; i < AON_TIMEOUT_MS; i++) {
-		if (readl(aon_local + MBOX_INFO(7)) == MBOX_ACK_MAGIC)
-			break;
-		sbi_timer_mdelay(1);
-	}
-	if (i == AON_TIMEOUT_MS)
-		return SBI_ETIMEDOUT;
-	writel(0, aon_local + MBOX_INFO(7));
-	if (!reply)
-		return 0;
-
-	for (i = 0; i < AON_TIMEOUT_MS; i++) {
-		if (readl(aon_local + MBOX_GENERATE) & MBOX_DATA_READY)
-			break;
-		sbi_timer_mdelay(1);
-	}
-	if (i == AON_TIMEOUT_MS)
-		return SBI_ETIMEDOUT;
-	header = readl(aon_local + MBOX_INFO(0));
-	status = readl(aon_local + MBOX_INFO(1)) & 0xff;
-	a210_aon_ack();
-	if ((header & 0xff) != AON_RPC_VERSION ||
-	    ((header >> 16) & 0xbf) != (AON_WDG_SERVICE | AON_REPLY) ||
-	    (header >> 24) != function || status)
+	ret = a210_scmi_wait();
+	if (ret)
+		return ret;
+	writel(0, scmi_shmem + SMT_STATUS);
+	writel(0, scmi_shmem + SMT_FLAGS);
+	writel(sizeof(u32) * (count + 1), scmi_shmem + SMT_LENGTH);
+	writel(header, scmi_shmem + SMT_HEADER);
+	for (i = 0; i < count; i++)
+		writel(args[i], scmi_shmem + SMT_PAYLOAD + sizeof(u32) * i);
+	__asm__ volatile ("fence iorw, iorw" ::: "memory");
+	writel(MBOX_DATA_READY, scmi_doorbell + MBOX_GENERATE);
+	ret = a210_scmi_wait();
+	if (ret)
+		return ret;
+	__asm__ volatile ("fence iorw, iorw" ::: "memory");
+	if (readl(scmi_shmem + SMT_STATUS) != SMT_FREE ||
+	    readl(scmi_shmem + SMT_HEADER) != header ||
+	    readl(scmi_shmem + SMT_LENGTH) < 2 * sizeof(u32) ||
+	    readl(scmi_shmem + SMT_LENGTH) > SMT_SIZE - SMT_HEADER ||
+	    (readl(scmi_shmem + SMT_LENGTH) & 3) ||
+	    readl(scmi_shmem + SMT_PAYLOAD))
 		return SBI_EIO;
 	return 0;
 }
@@ -121,27 +87,55 @@ static int a210_reset_check(u32 type, u32 reason)
 {
 	if (type > SBI_SRST_RESET_TYPE_WARM_REBOOT)
 		return 0;
-	if (type == SBI_SRST_RESET_TYPE_SHUTDOWN && !aon_ready)
+	if (type == SBI_SRST_RESET_TYPE_SHUTDOWN && !scmi_ready)
 		return 0;
-	return aon_ready ? 2 : 1;
+	return scmi_ready ? 2 : 1;
+}
+
+static int a210_wait_for_harts(void)
+{
+	struct sbi_hartmask harts;
+	u32 index, local = sbi_hartid_to_hartindex(current_hartid());
+	unsigned int elapsed;
+	int ret;
+
+	ret = sbi_domain_get_assigned_hartmask(sbi_domain_thishart_ptr(), &harts);
+	if (ret)
+		return ret;
+	sbi_hartmask_clear_hartindex(local, &harts);
+	/* The generic reset path sends HALT IPIs without waiting for them. */
+	for (elapsed = 0; elapsed < SCMI_TIMEOUT_US; elapsed += SCMI_POLL_US) {
+		bool stopped = true;
+
+		sbi_hartmask_for_each_hartindex(index, &harts) {
+			if (__sbi_hsm_hart_get_state(index) == SBI_HSM_STATE_STOPPED)
+				sbi_hartmask_clear_hartindex(index, &harts);
+			else
+				stopped = false;
+		}
+		if (stopped)
+			return 0;
+		sbi_timer_udelay(SCMI_POLL_US);
+	}
+	return SBI_ETIMEDOUT;
 }
 
 static void a210_reset(u32 type, u32 reason)
 {
 	bool shutdown = type == SBI_SRST_RESET_TYPE_SHUTDOWN;
+	u32 args[] = {0, shutdown ? SCMI_SHUTDOWN : SCMI_COLD_RESET};
 	int ret;
 
-	if (aon_ready) {
-		ret = a210_aon_request(shutdown ? AON_POWER_OFF : AON_RESTART);
-		if (ret)
-			sbi_printf("a210-reset: AON request failed: %d\n", ret);
-		else
-			/* The AON restart handler has a one-second delay. */
-			sbi_timer_mdelay(2000);
+	if (scmi_ready) {
+		ret = a210_wait_for_harts();
+		if (!ret)
+			ret = a210_scmi_request(SCMI_STATE_SET, args, array_size(args));
+		sbi_printf("a210-reset: SCMI transition returned: %d\n", ret);
 	}
 	if (!shutdown) {
 		void *enable = (void *)A210_RESET_ENABLE;
 
+		/* Keep recovery possible when the management core has stopped. */
 		sbi_printf("a210-reset: using system reset fallback\n");
 		writel(readl(enable) | A210_RESET_SYSTEM, enable);
 		writel(A210_RESET_SYSTEM, (void *)A210_RESET_REQUEST);
@@ -149,71 +143,56 @@ static void a210_reset(u32 type, u32 reason)
 }
 
 static struct sbi_system_reset_device a210_reset_device = {
-	.name = "a210-reset",
+	.name = "a210-scmi-reset",
 	.system_reset_check = a210_reset_check,
 	.system_reset = a210_reset,
 };
-
-static int a210_reset_address(const void *fdt, int nodeoff,
-			      const char *name, unsigned long minimum,
-			      void **address)
-{
-	uint64_t base, size;
-	int ret;
-
-	ret = fdt_get_node_addr_size_by_name(fdt, nodeoff, name, &base, &size);
-	if (ret)
-		return ret;
-	if (!base || (base & 3) || size < minimum || base > ~0UL - minimum)
-		return SBI_EINVAL;
-	*address = (void *)(unsigned long)base;
-	return 0;
-}
 
 static int a210_reset_init(const void *fdt, int nodeoff,
 			   const struct fdt_match *match)
 {
 	struct fdt_phandle_args mbox;
-	void *sync, *reset;
-	int index, ret;
+	const fdt32_t *shmem;
+	u64 base, size;
+	int index, len, node, ret;
 
 	if (fdt_node_check_compatible(fdt, 0, "zhihe,a210"))
 		return SBI_ENODEV;
-	index = fdt_stringlist_search(fdt, nodeoff, "mbox-names", "aon0");
+	index = fdt_stringlist_search(fdt, nodeoff, "mbox-names", "tx");
 	if (index < 0)
 		return SBI_EINVAL;
-	ret = fdt_parse_phandle_with_args(fdt, nodeoff, "mboxes",
-					 "#mbox-cells", index, &mbox);
+	ret = fdt_parse_phandle_with_args(fdt, nodeoff, "mboxes", "#mbox-cells", index, &mbox);
 	if (ret)
 		return ret;
-	if (mbox.args_count != 2 || mbox.args[0] != 1 || mbox.args[1])
+	if (mbox.args_count != 1 || mbox.args[0] ||
+	    !fdt_node_is_enabled(fdt, mbox.node_offset) ||
+	    fdt_node_check_compatible(fdt, mbox.node_offset, "zhihe,a210-ap-mailbox"))
 		return SBI_EINVAL;
-	if (!fdt_node_is_enabled(fdt, mbox.node_offset) ||
-	    fdt_node_check_compatible(fdt, mbox.node_offset,
-				     "zhihe,a210-mailbox-v2"))
-		return SBI_ENODEV;
-	ret = a210_reset_address(fdt, mbox.node_offset, "local0",
-				 MBOX_INFO(7) + sizeof(u32), &aon_local);
-	if (ret)
-		return ret;
-	ret = a210_reset_address(fdt, mbox.node_offset, "remote0",
-				 MBOX_INFO(7) + sizeof(u32), &aon_remote);
-	if (ret)
-		return ret;
-	ret = a210_reset_address(fdt, nodeoff, "aon-sync", sizeof(u32), &sync);
-	if (ret)
-		return ret;
-	ret = a210_reset_address(fdt, nodeoff, "aon-reset", sizeof(u32), &reset);
-	if (ret)
-		return ret;
-	aon_ready = readl(sync) == A210_AON_READY &&
-		(readl(reset) & A210_AON_RESET_RELEASE) == A210_AON_RESET_RELEASE;
+	ret = fdt_get_node_addr_size_by_name(fdt, mbox.node_offset, "tx", &base, &size);
+	if (ret || !base || (base & 3) || size < MBOX_GENERATE + sizeof(u32) ||
+	    base > ~0UL - size)
+		return SBI_EINVAL;
+	scmi_doorbell = (void *)(unsigned long)base;
+	/* The first shmem is the A2P channel; a P2A channel may follow. */
+	shmem = fdt_getprop(fdt, nodeoff, "shmem", &len);
+	if (!shmem || len < sizeof(*shmem))
+		return SBI_EINVAL;
+	node = fdt_node_offset_by_phandle(fdt, fdt32_to_cpu(*shmem));
+	if (node < 0 || fdt_node_check_compatible(fdt, node, "arm,scmi-shmem"))
+		return SBI_EINVAL;
+	ret = fdt_get_node_addr_size(fdt, node, 0, &base, &size);
+	if (ret || !base || (base & 3) || size < SMT_SIZE || base > ~0UL - size)
+		return SBI_EINVAL;
+	scmi_shmem = (void *)(unsigned long)base;
+	scmi_ready = !a210_scmi_request(SCMI_VERSION, NULL, 0) &&
+		readl(scmi_shmem + SMT_LENGTH) == 3 * sizeof(u32) &&
+		(readl(scmi_shmem + SMT_PAYLOAD + sizeof(u32)) >> 16) >= 1;
 	sbi_system_reset_add_device(&a210_reset_device);
 	return 0;
 }
 
 static const struct fdt_match a210_reset_match[] = {
-	{ .compatible = "zhihe,a210-aon" },
+	{ .compatible = "arm,scmi" },
 	{ },
 };
 

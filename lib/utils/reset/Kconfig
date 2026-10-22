@@ -10,7 +10,7 @@ config FDT_RESET
 if FDT_RESET
 
 config FDT_RESET_A210
-	bool "Zhihe A210 AON reset driver"
+	bool "Zhihe A210 SCMI system power driver"
 	default n
 
 config FDT_RESET_ATCWDT200
